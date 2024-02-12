@@ -113,7 +113,11 @@ function rgbToHex(r, g, b) {
 
 // Override the log function...
 function log(value) {
-	document.getElementById('log').value += value + "\n";
+	if (!isUserCodeEnabled()) {
+		document.getElementById('log').value += value + "\n";
+	} else {
+		console.log(value);
+	}
 }
 
 // Exec code...

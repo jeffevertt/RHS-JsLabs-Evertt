@@ -403,8 +403,14 @@ class SimulationManager {
 		currentPlayerIdx = playerIdx;
 		target = (this.targets.length > 0) ? this.targets[0].createCodeStruct() : null;
 		powerup = (this.powerups.length > 0) ? this.powerups[0].createCodeStruct() : null;
-		if (!executeCode(code)) {
-			return false;
+		if (userCodeFns[playerIdx] != null) {
+			// Run the code specified by userCode.js...
+			userCodeFns[playerIdx]();
+		} else {
+			// Run the code in the UI element...
+			if (!executeCode(code)) {
+				return false;
+			}
 		}
 		this.execCodeRequestedTankCommands(theTank);
 

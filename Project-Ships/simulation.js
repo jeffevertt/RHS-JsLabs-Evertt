@@ -456,8 +456,14 @@ class SimulationManager {
 		for (let i = 0; i < this.powerups.length; ++i) {
 			powerups.push( this.powerups[i].createCodeStruct() );
 		}
-		if (!executeCode(code)) {
-			return false;
+		if (userCodeFns[playerIdx] != null) {
+			// Run the code specified by userCode.js...
+			userCodeFns[playerIdx]();
+		} else {
+			// Run the code in the UI element...
+			if (!executeCode(code)) {
+				return false;
+			}
 		}
 		this.execCodeRequestedShipCommands(theShip);
 
