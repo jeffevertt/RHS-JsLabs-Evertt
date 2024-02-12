@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <title>RollerCoaster Simulator</title>
+
+    <style>
+      html,
+      body {
+        overflow: hidden;
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        padding: 10;
+      }
+
+      #renderCanvas {
+        width: 100%;
+        height: 90%;
+        touch-action: none;
+      }
+	  
+	  .input-field {
+		width:50px;
+		height:18px;
+		padding:2px;
+		border-radius:2px;
+		border:1px solid #ccc;
+		box-sizing:border-box;
+	  }
+    </style>
+
+    <script src="https://cdn.babylonjs.com/babylon.js"></script>
+    <script src="https://cdn.babylonjs.com/loaders/babylonjs.loaders.min.js"></script>
+	<script src="https://cdn.babylonjs.com/cannon.js"></script>
+	<script src="https://cdn.babylonjs.com/loaders/babylonjs.loaders.min.js"></script>
+	<script src="https://cdn.babylonjs.com/gui/babylon.gui.js"></script>
+    <script src="https://code.jquery.com/pep/0.4.3/pep.js"></script>
+  </head>
+
+  <body>
+    <canvas id="renderCanvas" touch-action="none" ondblclick="onDoubleClick()"></canvas>
+	<div id="prompts" style="display: flex; flex-direction: column;">
+		<div style="display: flex; flex-direction: row; height: 25px">
+			<label for="trackModel">Track (OBJ format): </label>
+			<input id="trackModelInput" name="trackModel" type="file" accept="OBJ/obj" onchange="loadModel()">
+		</div>
+		<div style="display: flex; flex-direction: row; height: 25px">
+			<label>Ball-drop-offset X:</label><input type="text" id="xpos" class="input-field" value="0"/>
+			<label>Y:</label><input type="text" id="ypos" class="input-field" value="1"/>
+			<label>Z:</label><input type="text" id="zpos" class="input-field" value="0"/>
+			<label>, Ground-height:</label><input type="text" id="groundheight" class="input-field" value="-39.37">
+		</div>
+		<div style="display: flex; flex-direction: row; height: 25px">
+			<label>Time-scale:</label><input type="text" id="timeScale" class="input-field" value="0.5"/>
+			<label>Restitution:</label><input type="text" id="restitution" class="input-field" value="0.6"/>
+		</div>
+	</div>
+    <script>
+      const canvas = document.getElementById("renderCanvas");
+      const engine = new BABYLON.Engine(canvas, true);
+	  const boxHeight = 10;
+	  const ballRadius = 0.25;
+	  var scene, physicsEngine, assetsManager, camera, ground, ball, preloadMeshCount;
+	  var dropBallTime, dropBallFalling = false, textBallTime, physicsTimeScale = 0.5;
+	  var trackModels = [], matTrack;
+
+      // Scene
+      const createScene = function () {
+		// Create the scene...
+        scene = new BABYLON.Scene(engine);
+		assetsManager = new BABYLON.AssetsManager(scene);
+		
+		// Setup the physics...
+		let cannonPlugin = new BABYLON.CannonJSPlugin(false); //true); // false slows sim, true lets you set subTimeStep...
+		scene.enablePhysics(new BABYLON.Vector3(0,-386.088,0), cannonPlugin); // Units are in inches / sec^2
+		physicsEngine = scene.getPhysicsEngine();
+		physicsEngine.setTimeStep(1 / 60);
+		//physicsEngine.setSubTimeStep(1);
+		
+		// Camera...
+		camera = new BABYLON.FreeCamera("camera", new BABYLON.Vector3(0, 10, -50));
+		camera.setTarget(new BABYLON.Vector3(0, -15, 0));              
+		camera.attachControl(canvas,true);
+		camera.keysUp.push(87);    //W
+		camera.keysDown.push(83)   //D
+		camera.keysLeft.push(65);  //A
+		camera.keysRight.push(68); //S
+		camera.speed = 0.25;
+		camera.angularSensibility = 7500;
+		
+		// Mouse wheel move camera...
+		scene.onPrePointerObservable.add( function(pointerInfo, eventState) {
+			var event = pointerInfo.event;
+			var wheelDelta = (event.wheelDelta) ? event.wheelDelta : ((event.detail) ? delta = -event.detail : 0);
+			if (wheelDelta) {
+				var dir = scene.activeCamera.getDirection(BABYLON.Axis.Z);
+				if (wheelDelta > 0)
+					scene.activeCamera.position.addInPlace(dir);
+				else
+					scene.activeCamera.position.subtractInPlace(dir);
+			}
+		}, BABYLON.PointerEventTypes.POINTERWHEEL, false);
+		
+		// Lights...
+        const lightHemispheric = new BABYLON.HemisphericLight("lightHemispheric", new BABYLON.Vector3(1, 2, 0));
+		lightHemispheric.diffuse = new BABYLON.Color3(0.3, 0.25, 0.2);
+		lightHemispheric.specular = new BABYLON.Color3(0.3, 0.25, 0.2);
+		lightHemispheric.groundColor = new BABYLON.Color3(0.15, 0.15, 0.25);
+		const lightSun = new BABYLON.DirectionalLight("lightSun", new BABYLON.Vector3(-1, -1, 0), scene);
+		lightSun.position = new BABYLON.Vector3(0, 10, 0);
+		lightSun.diffuse = new BABYLON.Color3(1, 0.9, 0.6);
+		lightSun.specular = new BABYLON.Color3(1, 0.9, 0.6);
+		lightSun.intensity = 0.9;
+		
+		// Shadows (from the sun)...
+		const shadowGenerator = new BABYLON.ShadowGenerator(1024, lightSun);
+		
+		// Ground...
+		ground = BABYLON.MeshBuilder.CreateBox("ground", { width:100, height:boxHeight, depth:100 }, scene);
+		ground.position.y = document.getElementById("groundheight").value - (boxHeight / 2); // One meter == 39.37 inches
+		ground.diffuseColor = new BABYLON.Color3(1, 1, 1);
+		ground.physicsImpostor = new BABYLON.PhysicsImpostor(ground, BABYLON.PhysicsImpostor.BoxImpostor, { mass: 0, restitution: 0.35 }, scene);
+		ground.receiveShadows = true;
+		document.getElementById("groundheight").addEventListener("change", groundHeightChanged);
+		
+		// Ground material...
+		var matGround = new BABYLON.StandardMaterial("matGround", scene);
+		matGround.diffuseColor = new BABYLON.Color3(0.7, 1, 0.8);
+		matGround.specularColor = new BABYLON.Color3(0.7, 1, 0.8);
+		matGround.diffuseTexture = new BABYLON.Texture("./textures/stone_2.png", scene);
+		matGround.diffuseTexture.uScale = 1;
+		matGround.diffuseTexture.vScale = 1;
+		ground.material = matGround;
+		
+		// Ball...
+        ball = BABYLON.MeshBuilder.CreateSphere("ball", {"diameter":(ballRadius*2)});
+		ball.setPositionWithLocalVector(new BABYLON.Vector3(0, 0, 0));
+		ball.physicsImpostor = new BABYLON.PhysicsImpostor(ball, BABYLON.PhysicsImpostor.SphereImpostor, {mass:2, friction:0.1, restitution:0.75}, scene);
+		shadowGenerator.getShadowMap().renderList.push(ball);
+		
+		// Ball material...
+		var matBall = new BABYLON.StandardMaterial("matBall", scene);
+		matBall.diffuseColor = new BABYLON.Color3(1, 1, 1);
+		matBall.specularColor = new BABYLON.Color3(1, 1, 1);
+		matBall.diffuseTexture = new BABYLON.Texture("./textures/marble_0.png", scene);
+		ball.material = matBall;
+		
+		// Track material...
+		matTrack = new BABYLON.StandardMaterial("matTrack", scene);
+		matTrack.diffuseColor = new BABYLON.Color3(0.9, 0.9, 1);
+		matTrack.specularColor = new BABYLON.Color3(0.8, 0.8, 0.9);
+		matTrack.diffuseTexture = new BABYLON.Texture("./textures/metal_0.png", scene);
+		matTrack.diffuseTexture.uScale = 0.05;
+		matTrack.diffuseTexture.vScale = 0.05;
+		
+		// GUI: Button...
+		var advancedTexture = BABYLON.GUI.AdvancedDynamicTexture.CreateFullscreenUI("UI");
+		var buttonDropBall = BABYLON.GUI.Button.CreateSimpleButton("buttonRestart", "Drop Ball");
+		buttonDropBall.horizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_RIGHT;
+		buttonDropBall.verticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_TOP;
+		buttonDropBall.paddingRight = "5px";
+		buttonDropBall.paddingTop = "5px";
+		buttonDropBall.width = "110px"
+		buttonDropBall.height = "30px";
+		buttonDropBall.color = "black";
+		buttonDropBall.cornerRadius = 10;
+		buttonDropBall.background = "lightgray";
+		buttonDropBall.onPointerUpObservable.add(function() {
+			dropBall();
+		});
+		advancedTexture.addControl(buttonDropBall);
+		
+		// GUI: Text...
+		textBallTime = new BABYLON.GUI.TextBlock();
+		textBallTime.textHorizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_RIGHT;
+		textBallTime.textVerticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_TOP;
+		textBallTime.paddingRight = "6px";
+		textBallTime.paddingTop = "30px";
+		textBallTime.text = "";
+		textBallTime.fontSize = 24;
+		advancedTexture.addControl(textBallTime);   
+		
+		// Kick off a ball drop...
+		dropBall();
+      };
+
+      // Render loop...
+      engine.runRenderLoop(function () {
+		// Update drop ball timer...
+		if ((dropBallTime != null) && dropBallFalling) {
+			// Check if hit ground...
+			if (ball.position.y < (ground.position.y + boxHeight / 2 + ballRadius * 1.25)) {
+				dropBallFalling = false;
+			}
+			
+			// Timer...
+			textBallTime.text = (Math.floor((Date.now() - dropBallTime) * physicsTimeScale) / 1000.0) + " sec"
+			textBallTime.color = dropBallFalling ? "lightgray" : "white";
+		}
+	  
+		// Do the render...
+        scene.render();
+      });
+
+      // Deal with resize...
+      window.addEventListener("resize", function () {
+        engine.resize();
+      });
+	  
+	  // Double click...
+	  function onDoubleClick() {
+		dropBall();
+	  };
+	  
+	  // Reset/Drop ball...
+	  function dropBall() {
+		// Physics constants...
+		let timeScale = document.getElementById("timeScale").value;
+		physicsTimeScale = timeScale == 0 ? 1 : timeScale;
+		physicsEngine.setTimeStep(1 / 60 * physicsTimeScale);
+		let restitution = document.getElementById("restitution").value;
+		ball.physicsImpostor.restitution = restitution;
+		
+		// Reset ball position...
+		ball.position = new BABYLON.Vector3(document.getElementById("xpos").value, document.getElementById("ypos").value, document.getElementById("zpos").value);
+		ball.physicsImpostor.setLinearVelocity(new BABYLON.Vector3(0,0,0));
+		ball.physicsImpostor.setAngularVelocity(new BABYLON.Vector3(0,0,0));
+		
+		// Timer...
+		dropBallTime = Date.now();
+		dropBallFalling = true;
+	  }
+	  
+	  // On ground height changed...
+	  function groundHeightChanged() {
+		ground.position.y = document.getElementById("groundheight").value - (boxHeight / 2);
+	  }
+	  
+	  // Track model loading...
+	  function onTrackLoaded(scene) {
+		// Grab the meshes (hack to get the just loaded meshes)...
+		for (let i = preloadMeshCount; i < scene.meshes.length; ++i) {
+			trackModels.push(scene.meshes[i]);
+		}
+		
+		// Deal with y-up vs z-up (in fusion)...
+		for (let i = 0; i < trackModels.length; ++i) {
+			trackModels[i].rotation.x = BABYLON.Tools.ToRadians(270);
+			trackModels[i].physicsImpostor = new BABYLON.PhysicsImpostor(trackModels[i], BABYLON.PhysicsImpostor.MeshImpostor, { mass:0, friction:0.05, restitution:0.9 }, scene);
+			trackModels[i].material = matTrack;
+			trackModels[i].receiveShadows = true;
+		}
+	  }
+	  function loadModel() {
+		// Destroy any old tracks...
+		for (let i = 0; i < trackModels.length; ++i) {
+			trackModels[i].dispose();
+			trackModels[i] = null;
+		}
+		trackModels = [];
+		
+	    // Kick off the load...
+		preloadMeshCount = scene.meshes.length; // Hack to get the loaded meshes (not sure if there is a better way)...
+		const file = document.querySelector('input[type=file]').files[0];
+		const reader = new FileReader();
+		reader.addEventListener("load", () => {
+			const objDataURL = reader.result;
+			BABYLON.SceneLoader.Append('', objDataURL, scene, onTrackLoaded, undefined, undefined, ".obj");
+		}, false);
+		if (file) {
+			reader.readAsDataURL(file);
+		}
+	  };
+	  
+	  // Kick it off...
+	  createScene();
+    </script>
+  </body>
+</html>

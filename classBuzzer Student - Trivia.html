@@ -1,0 +1,86 @@
+﻿<!DOCTYPE html>
+
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+    <meta charset="utf-8" />
+    <title>Student Trivia</title>
+
+    <style>
+        body {
+            background-image: url("rhs-background.jpg");
+            background-repeat: no-repeat, repeat;
+            background-color: #FFFFFF;
+        }
+        .content {
+            width: 80%;
+            margin-left: auto;
+            margin-right: auto;
+        }
+    </style>
+</head>
+
+<body>
+    <script type="text/javascript">
+        function doBuzzInRequest() {
+            //document.getElementsByTagName("BODY")[0].style.backgroundColor = "yellow";
+
+            (async () => {
+                let teamName = document.getElementById('teamNameInput').value;
+                let teamAnswer = document.getElementById('teamAnswerInput').value;
+                let studentName = teamAnswer + ' (' + teamName + ')';
+                const data = {
+                    TableName: 'classBuzzerTable',
+                    EventType: 'classStudentBuzz',
+                    Item: {
+                        'classBuzzerPartitionKey': '1',
+                        'StudentName': studentName
+                    }
+                };
+                const rawResponse = await fetch('https://u9m0v5iwsk.execute-api.us-west-2.amazonaws.com/default/classBuzzer', {
+                    method: 'POST',
+                    headers: {
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                });
+                const content = await rawResponse.json();
+                //console.log(JSON.stringify(content));
+
+                // Set the response on the UI element...
+                let uiResponse = document.getElementById('serverResponseId');
+                uiResponse.innerHTML = content.response;
+
+                // Clear the response after a time...
+                setTimeout(function () { uiResponse.innerHTML = ""; }, 3000);
+            })();
+        }
+        function textBoxUpdateEnabled() {
+            let inputOne = document.getElementById('teamNameInput');
+            let inputTwo = document.getElementById('teamAnswerInput');
+            if ((inputOne.value.length > 0) && (inputTwo.value.length > 0)) {
+                document.getElementById('buzzButtonId').disabled = false;
+            } else {
+                document.getElementById('buzzButtonId').disabled = true;
+            }
+        }
+    </script>
+
+    <div class="content">
+        <h1 style="font-size : 40px; width: 100%;">Student Trivia</h1>
+        <form>
+            <label for="teamName" style="font-size : 25px;">Team:</label>
+            <input type="text" id="teamNameInput" name="teamName" oninput="textBoxUpdateEnabled()" style="font-size : 25px;">
+            <br><br>
+            <label for="teamAnswer" style="font-size : 25px;">Answer:</label>
+            <input type="text" id="teamAnswerInput" name="teamAnswer" oninput="textBoxUpdateEnabled()" style="font-size : 25px;">
+            <br><br>
+            <input id="buzzButtonId" name="buzzButton" type="button" value="Submit Answer" onclick="doBuzzInRequest()" style="font-size : 30px; width: 100%; height: 50px;" disabled />
+            <br />
+            <br />
+            <label id="serverResponseId" style="font-size : 35px;color:blueviolet"></label>
+        </form>
+    </div>
+</body>
+
+</html>

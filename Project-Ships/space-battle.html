@@ -1,0 +1,518 @@
+<html>
+<head/>
+<body>
+  <div id="canvas" style="width:100%; height:70%"></div>
+  <div id="prompts" style="width:100%; height:30%; display: flex; flex-direction: row;">
+	<div id="divCode1" style="width:35%; height:100%; float:left">
+		<label id="labelCode1" style="height:20px" title="VARIABLES&#10;  ship {&#10;    pos { x, y },&#10;    dir { x, y },&#10;    vel { x, y },&#10;    right { x, y },&#10;    speedLinear,&#10;    speedAngular,&#10;    shotRange,&#10;    shotAmmo,		// How much ammo you have&#10;    exec(command, param)&#10;  }&#10;  powerup {&#10;    pos { x, y },&#10;    value&#10;  }&#10;  powerups [ list of powerups ]&#10;  target {&#10;    pos { x, y },&#10;    vel { x, y }&#10;  }&#10;  targets [ list of targets ]&#10;  other { 			// Used only in ship v ship mode&#10;    pos { x, y },&#10;    dir { x, y },&#10;    vel { x, y },&#10;    speedLinear,&#10;    speedAngular,&#10;    shotRange,&#10;    shotAmmo&#10;  }&#10;  levelTime&#10;&#10;RULES&#10;  Points: Ship cmd (-1), Powerup (+5), Targets (+25), OtherShip (+50)&#10;  Powerups: +Ammo (equal to 'value'), +Range ('value' * 1%), +Speed ('value' * 0.5%)">Code (ship control):</label><br>
+		<textarea id="textCode1" name="code" style="width:100%; height:calc(100% - 20px);" spellcheck="false"></textarea><br>
+	</div>
+	<div id="divCode2" style="width:35%" class="left">
+		<label id="labelCode2" style="height:20px" title="VARIABLES&#10;  ship {&#10;    pos { x, y },&#10;    dir { x, y },&#10;    vel { x, y },&#10;    right { x, y },&#10;    speedLinear,&#10;    speedAngular,&#10;    shotRange,&#10;    shotAmmo,		// How much ammo you have&#10;    exec(command, param)&#10;  }&#10;  powerup {&#10;    pos { x, y },&#10;    value&#10;  }&#10;  powerups [ list of powerups ]&#10;  target {&#10;    pos { x, y },&#10;    vel { x, y }&#10;  }&#10;  targets [ list of targets ]&#10;  other { 			// Used only in ship v ship mode&#10;    pos { x, y },&#10;    dir { x, y },&#10;    vel { x, y },&#10;    speedLinear,&#10;    speedAngular,&#10;    shotRange,&#10;    shotAmmo&#10;  }&#10;  levelTime&#10;&#10;RULES&#10;  Points: Ship cmd (-1), Powerup (+5), Targets (+25), OtherShip (+50)&#10;  Powerups: +Ammo (equal to 'value'), +Range ('value' * 1%), +Speed ('value' * 0.5%)">Code (player 2):</label><br>
+		<textarea id="textCode2" name="code" style="width:100%; height:calc(100% - 20px);" spellcheck="false"></textarea><br>
+	</div>
+	<div style="width:30%; height:100%">
+		<div style="width:100%; height 100%;">
+			<label for="log">Log:</label><br>
+			<textarea id="log" name="log" style="width:100%; height:calc(100% - 20px);" disabled></textarea><br>
+		</div>
+	</div>
+	<div style="width:10%; height:100%; float:right; padding:3px">
+		<label for="log" style="height:20px">Controls:</label><br>
+		<div style="display: flex; flex-direction: column; width:100%">
+			<button id="simulateButton" onclick="simulateButton()" style="width:100%; padding:3px">Run Code</button>
+			<button id="resetSimulation" onclick="resetButton()" style="width:100%; padding:3px">Reset</button>
+		</div>
+		<br/>
+		<div style="display: flex; flex-direction: column; width:100%">
+			<button id="levelPrevId" onclick="levelPrev()" style="width:100%; padding:3px">Prev Level</button>
+			<button id="levelNextId" onclick="levelNext()" style="width:100%; padding:3px">Next Level</button>
+		</div>
+	</div>
+  </div>
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.1/jquery.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/raphael/2.3.0/raphael.min.js"></script>
+<script src="math.js"></script>
+<script src="vec2.js"></script>
+<script src="utils.js"></script>
+<script src="ship.js"></script>
+<script src="simulation.js"></script>
+<script>
+    // Globals
+	var currentLevel = 1;
+	var canvasSize, raphael, origin;
+	var field, textLevel, textScore, textTimer;
+	var simMan = new SimulationManager();
+	var pixelsPerUnit = 50;
+	var cancelSimulation = false;
+	
+	// Game config...
+	var ammoMaxRange = 10;
+	
+	// Game stats...
+	var levelTime = 0;
+	var levelScore = 0, levelScore2 = 0;
+	
+	// Game code access objects...
+	var ship, powerup, powerups, target, targets, other, userData;
+	var queuedCodeCommands = [];
+	var state = { }; // exposed to user script (code state allows user persistent data)
+	var currentPlayerIdx = -1;
+	var playerName1 = "Player 1";
+	var playerName2 = "Player 2";
+	
+	// UI globals...
+	var timeFeedbackCodeClean1 = 0;
+	var timeFeedbackCodeError1 = 0;
+	var timeFeedbackCodeClean2 = 0;
+	var timeFeedbackCodeError2 = 0;
+	
+	// Called on resize, sets things up...
+    function setupApp() {
+		// Create up the Raphael canvas....	
+	    let canvas = document.getElementById("canvas");
+        canvasSize = { w: canvas.offsetWidth, h: canvas.getBoundingClientRect().height };
+        if (raphael == null) {
+			raphael = Raphael("canvas", canvasSize.w, canvasSize.h);
+		} else if (simMan != null) {
+			simMan.destroyAll();
+		}
+		raphael.clear();
+		raphael.setSize(canvasSize.w, canvasSize.h);
+		
+		// Figure out a reasonable scale...
+		pixelsPerUnit = Math.floor(Math.min(canvasSize.w, canvasSize.h) / 12);
+		
+        // Background...
+        field = raphael.image("https://dev.d1h0uqphj29cdn.amplifyapp.com/Project-Ships/background.jpg", 0, 0, canvasSize.w, canvasSize.h); //raphael.rect(0, 0, canvasSize.w, canvasSize.h);
+        field.attr({fill: 'lightgray', stroke: 'yellow', 'stroke-width': 3});
+		
+		// Clicking the background functions...
+		field.click(function() {
+			// Toggle simulation...
+			simulateButton();
+		});
+		field.dblclick(function() {
+			resetSimulation();
+		});
+		
+        // Origin...
+        origin = { x:0, y:canvasSize.h };
+		
+		// Grid...
+		let gridColor = "white";
+		let gridStrokeWidth = 0.3;
+		for (let i = 0; i <= canvasSize.w; i += pixelsPerUnit) {
+			raphael.path(["M", i, 0, "L", i, canvasSize.h]).attr({ stroke: gridColor, "stroke-width": gridStrokeWidth });
+		}
+		for (let i = 0; i <= canvasSize.h; i += pixelsPerUnit) {
+			raphael.path(["M", 0, canvasSize.h - i, "L", canvasSize.w, canvasSize.h - i]).attr({ stroke: gridColor, "stroke-width": gridStrokeWidth });
+		}
+		
+		// Level text...
+		textLevel = raphael.text(4, 12, "").attr({ "text-anchor": "start", "font-size": 18, "font-family": "Arial, sans-serif", "font-weight": "bold", "fill": "#AAAAFF" });
+		
+		// Score text...
+		textTimer = raphael.text(4, 12, "").attr({ "text-anchor": "start", "font-size": 18, "font-family": "Arial, sans-serif", "font-weight": "bold", "fill": "#AAAAFF" });
+		textScore = raphael.text(4, 12, "").attr({ "text-anchor": "start", "font-size": 18, "font-family": "Arial, sans-serif", "font-weight": "bold", "fill": "#AADDAA" });
+		textScoreFinal = raphael.text(canvasSize.w/2, canvasSize.h/2, "Final Score: ").attr({ "text-anchor": "middle", "font-size": pixelsPerUnit * 2, "font-family": "Arial, sans-serif", "font-weight": "bold", "fill": "#118811", "stroke-width": 2, "stroke":"white" });
+		textScoreFinal.hide();
+		
+		// And do a reset...
+		resetSimulation();
+    }
+	
+	// Level functions...
+	function calcLevelDesc(level) {
+		switch (level) {
+			case 1  : return "Collect the PowerUp";
+			case 2  : return "Collect the PowerUps";
+			case 3  : return "Shoot Target, Collect PowerUps";
+			case 4  : return "Shoot Targets, Collect PowerUps";
+			case 5  : return ((playerName1 == "Player 1") ? "Ship" : playerName1) + " v " + ((playerName2 == "Player 2") ? "Ship" : playerName2) + " Battle!";
+			case 6  : return ((playerName1 == "Player 1") ? "Ship" : playerName1) + " v " + ((playerName2 == "Player 2") ? "Ship" : playerName2) + " MADNESS!!!";
+		}
+	}
+	function onLevelSetup() {
+		// Default time for level...
+		levelTime = 60;
+		levelScore = 0;
+		levelScore2 = 0;
+		
+		// Level specific objects...
+		let ship = null, shipB = null;
+		let useBothCodeWindows = false;
+		switch (currentLevel) {
+			case 1  : 
+				ship = simMan.createShip(0, new vec2(1.5, 1.5), vec2.right(), ammoMaxRange);
+				break;
+			case 2  : 
+				ship = simMan.createShip(0, new vec2(1.5, 1.5), vec2.right(), ammoMaxRange);
+				break;
+			case 3  : 
+				ship = simMan.createShip(0, new vec2(1.5, 1.5), vec2.right(), ammoMaxRange);
+				break;
+			case 4  : 
+				levelTime = 60 * 1.5;
+				ship = simMan.createShip(0, new vec2(1.5, 1.5), vec2.right(), ammoMaxRange);
+				break;
+			case 5  : 
+				levelTime = 60 * 1.5;
+				useBothCodeWindows = true;
+				ship = simMan.createShip(0, new vec2(1.5, 1.5), vec2.right(), ammoMaxRange);
+				shipB = simMan.createShip(1, clampToClosestHalfUnit(new vec2(toCoordFrameLength(canvasSize.w) - 1.5, 1.5)), vec2.left(), ammoMaxRange);
+				break;
+			case 6  : 
+				levelTime = 60 * 2;
+				useBothCodeWindows = true;
+				ship = simMan.createShip(0, new vec2(1.5, 1.5), vec2.right(), ammoMaxRange);
+				shipB = simMan.createShip(1, clampToClosestHalfUnit(new vec2(toCoordFrameLength(canvasSize.w) - 1.5, 1.5)), vec2.left(), ammoMaxRange);
+				break;				
+		}
+		
+		// Code windows...
+		document.getElementById("divCode1").style.display = "block";
+		document.getElementById("divCode1").style = useBothCodeWindows ? "width:35%" : "width:70%";
+		document.getElementById("labelCode1").innerHTML = useBothCodeWindows ? "Code (player 1):" : "Code (ship control):";
+		document.getElementById("divCode2").style.display = useBothCodeWindows ? "block" : "none";
+		if (!useBothCodeWindows) {
+			document.getElementById("divCode2").value = "";
+		}
+		
+		// First time update...
+		onLevelUpdate(0, true);
+		
+		// Text...
+		updateLevelText();
+	}
+	function updateLevelText() {
+		textLevel.attr({ "text":"level " + currentLevel + " (" + calcLevelDesc(currentLevel) + ")" });
+		textLevel.toFront();
+		updateTimerAndScoreText();
+	}
+	function onLevelUpdate(deltaTime, firstUpdate) {
+		// Level specific objects...
+		let maxPowerUps = 0, maxTargets = 0;
+		switch (currentLevel) {
+			case 1  : 
+				maxPowerUps = 1;
+				maxTargets = 0;
+				break;
+			case 2  : 
+				maxPowerUps = 2;
+				maxTargets = 0;
+				break;
+			case 3  : 
+				maxPowerUps = 2;
+				maxTargets = 1;
+				break;
+			case 4  : 
+				maxPowerUps = 2;
+				maxTargets = 3;
+				break;
+			case 5  : 
+				maxPowerUps = 2;
+				maxTargets = 3;
+				break;
+			case 6  : 
+				maxPowerUps = 5;
+				maxTargets = 8;
+				break;
+		}
+		
+		// Spawn target, till we're happy...
+		while (simMan.shouldSpawnTarget(maxTargets)) {
+			let targetLocation = pickSpawnLocation(6, 5, 5, 0.9, true, (currentLevel >= 5) && firstUpdate);
+			let targetSpeed = randRange(0.5, 2.5);
+			let targetVel = pickTargetDirection().multiply(targetSpeed);
+			let target = simMan.createTarget(targetLocation, targetVel);
+		}
+			
+		// Spawn powerups, till we're happy...
+		while (simMan.shouldSpawnPowerup(maxPowerUps)) {
+			let powerupLocation = pickSpawnLocation(6, 5, 5, 0.9, true, (currentLevel >= 5) && firstUpdate);
+			let powerupValue = Math.floor(randRange(2, 4));
+			let powerup = simMan.createPowerUp(powerupLocation, powerupValue);
+		}
+	}
+	function pickTargetDirection() {
+		let rnd = randRange(0, 1);
+		if (rnd < 0.25) {
+			return vec2.left();
+		} else if (rnd < 0.5) {
+			return vec2.right();
+		} else if (rnd < 0.5) {
+			return vec2.up();
+		}
+		return vec2.down();
+	}
+	function levelNext() {
+	    currentLevel = (currentLevel == 6) ? currentLevel : (currentLevel + 1);
+		resetSimulation();
+	}
+	function levelPrev() {
+	    currentLevel = (currentLevel == 1) ? 1 : (currentLevel - 1);
+		resetSimulation();
+	}
+	function onLevelChanged() {
+		textLevel.toFront();
+		textScore.toFront();
+		textTimer.toFront();
+		resetSimulation();
+	}
+	function setPlayerName(name) {
+		if (currentPlayerIdx == 0) {
+			playerName1 = name;
+			updateLevelText();
+		} else if (currentPlayerIdx == 1) {
+			playerName2 = name;
+			updateLevelText();
+		}
+	}
+	
+	// Helpers...
+	function pickSpawnLocation(minDstFromShips, minDstFromTargets, minDstFromPowerUps, minDstFromSides, clampToCenters, favorMidX) {
+		// Loop over some number of attempts...
+		const maxAttempts = 20;
+		let pos;
+		for (let i = 0; i < maxAttempts; ++i) {
+			// Random...
+			pos = new vec2(randRange(0, toCoordFrameLength(canvasSize.w)), randRange(0, toCoordFrameLength(canvasSize.h)));
+			
+			// Support favorMidX (we use this on multiplayer, to try to keep things more fair)...
+			if (favorMidX) {
+				pos.x = toCoordFrameLength(canvasSize.w / 2 * randRange(0.4, 1.6));
+			}
+			
+			// Maybe clamp to square centers...
+			pos = clampToCenters ? new vec2(Math.floor(pos.x) + 0.5, Math.floor(pos.y) + 0.5) : pos;
+		
+			// Check it against our constraints (if last attempt, just go with it)...
+			if (i < (maxAttempts - 1)) {
+				// Check distance from sides...
+				let minDstFromSide = Math.min(Math.min(Math.min(pos.x, pos.y), toCoordFrameLength(canvasSize.w) - pos.x), toCoordFrameLength(canvasSize.h) - pos.y);
+				if (minDstFromSide < minDstFromSides) {
+					continue;
+				}
+
+				// Next, distance from ships, targets, powerups...
+				let minDstFromShip = simMan.calcMinDstFromAShip(pos);
+				if (minDstFromShip < minDstFromShips) {
+					continue;
+				}
+				let minDstFromTarget = simMan.calcMinDstFromATarget(pos);
+				if (minDstFromTarget < minDstFromTargets) {
+					continue;
+				}
+				let minDstFromPowerUp = simMan.calcMinDstFromAPowerUp(pos);
+				if (minDstFromPowerUp < minDstFromPowerUps) {
+					continue;
+				}
+			}
+			
+			// This one works, break out...
+			break;
+		}
+		return pos;
+	}
+	
+	// Timer & score...
+	function updateTimerAndScoreText() {
+		textTimer.attr({ "text": "Time: " + Math.ceil(levelTime) });
+		textTimer.toFront();
+		textTimer.attr({ x: canvasSize.w - textTimer.getBBox().width - 10, y:16 });
+		
+		textScore.attr({ "text": "Score: " + levelScore + ((currentLevel >= 5) ? " v " + levelScore2 : "") });
+		textScore.toFront();
+		textScore.attr({ x: canvasSize.w - textScore.getBBox().width - 10, y:38 });
+	}
+	function awardPoints(points, playerIdx = 0) {
+		levelScore += (playerIdx == 0) ? points : 0;
+		levelScore2 += (playerIdx == 1) ? points : 0;
+		updateTimerAndScoreText();
+	}
+	
+	// Button functions...
+	function simulateButton() {
+		if (document.getElementById('simulateButton').textContent == "Simulate") {
+			if (levelTime == 0) {
+				resetSimulation();
+			}
+			simulate();
+		} else {
+			resetSimulation(false);
+		}
+	}
+	function resetButton() {
+		resetSimulation();
+	}
+	
+	// Simulation: Reset...
+	function resetSimulation(fullReset = true) {
+		// Maybe destroy all objects...
+		if (fullReset) {
+			simMan.destroyAll();
+			
+			// Code window backgrounds...
+			timeFeedbackCodeClean1 = 0;
+			timeFeedbackCodeError1 = 0;
+			timeFeedbackCodeClean2 = 0;
+			timeFeedbackCodeError2 = 0; 
+			document.getElementById('textCode1').style="background-color:white; width:100%; height:calc(100% - 20px);";
+			document.getElementById('textCode2').style="background-color:white; width:100%; height:calc(100% - 20px);";
+			
+			// Player names...
+			playerName1 = "Player 1";
+			playerName2 = "Player 2";
+			updateLevelText();
+			
+			// Reset user state
+			state = { };	
+		}
+
+		// Cancel us out of the simulation (if it's currently running)...
+		cancelSimulation = true;
+		document.getElementById('simulateButton').textContent = "Simulate";
+		field.attr({stroke: 'black'});
+		
+		// Clear the log...
+		if (fullReset) {
+			document.getElementById('log').value = '';
+		}
+		
+		// Setup for the level...
+		if (fullReset) {
+			onLevelSetup();
+		}
+		
+		// Final score...
+		if (levelTime == 0) {
+			if (currentLevel >= 5) {
+				let winnerText = (levelScore > levelScore2) ? playerName1 + " Wins!" : ((levelScore2 > levelScore) ? playerName2 + " Wins!" : "Tie Result!");
+				textScoreFinal.attr({ text:winnerText });
+			}
+			else {
+				textScoreFinal.attr({ text:("Final Score: " + levelScore) });
+			}
+				
+			textScoreFinal.show();
+			textScoreFinal.toFront();
+			
+			// Leaderboard
+			postToLeaderboard();
+		}
+		else {
+			textScoreFinal.hide();
+		}
+		
+		// UI updates...
+		document.getElementById("levelPrevId").disabled = (currentLevel <= 1) ? true : false;
+		document.getElementById("levelNextId").disabled = (currentLevel >= 6) ? true : false;	
+		
+		// Tell the simulation about it...
+		simMan.update(0);
+	}
+	async function postToLeaderboard() {
+		if (currentLevel <= 5) {
+			await postLeaderboard(playerName1, levelScore);
+		}
+		if (currentLevel == 5) {
+			await postLeaderboard(playerName2, levelScore2);
+		}
+	}
+	async function postLeaderboard(name, score) {
+		if ((name == "Player 1") || (name == "Player 2")) {
+			return;
+		}
+		let leaderBoardPeriod = 2;
+		let jsonPayload = "{\"TableName\":\"classLeaderboardTable\",\"EventType\":\"postLeaderboardStudent\",\"Item\":{\"periodKey\":\"" + leaderBoardPeriod + "\",\"StudentName\":\"" + name + "\",\"score\":\"" + score + "\"}}";
+		const response = await fetch("https://u9m0v5iwsk.execute-api.us-west-2.amazonaws.com/default/classBuzzer", {
+			method: "POST",
+			body: jsonPayload,
+			headers: { "Content-type": "application/json; charset=UTF-8" }
+		});
+		log("leaderboard POST: " + name + " (" + score + ")");
+	}
+
+	// Simulation function...
+    function simulate() {
+		// Simulation function...
+		var advance = function() {
+			// Check for cancelled...
+			if (cancelSimulation) {
+				resetSimulation(false);
+				return;
+			}
+			
+			// Step the sim...
+			let timeNow = Date.now()
+			let deltaTime = (timeNow - timeLastUpdate) / 1000;
+			timeLastUpdate = timeNow;
+			
+			// Clamp deltaTime (slow down the sim, if needed)...
+			deltaTime = Math.min(deltaTime, 1/10);
+			
+			// Sim manager...
+			simMan.update(deltaTime);
+			
+			// Code update...
+			let hitError = false;
+			if (simMan.isReadyToAskCodeForNextCommand(0) && (levelTime > 0)) {
+				hitError = !simMan.execCode(0, document.getElementById('textCode1').value);
+				if (!hitError) { timeFeedbackCodeClean1 = 1; } else { timeFeedbackCodeError1 = 1; }
+			}
+			if (!hitError && (simMan.isReadyToAskCodeForNextCommand(1) && (levelTime > 0) && (currentLevel >= 5))) {
+				hitError = !simMan.execCode(1, document.getElementById('textCode2').value);
+				if (!hitError) { timeFeedbackCodeClean2 = 1; } else { timeFeedbackCodeError2 = 1; }
+			}
+
+			// Code success / error feedback...
+			if ((timeFeedbackCodeClean1 > 0) || (timeFeedbackCodeError1 > 0)) {
+				timeFeedbackCodeClean1 = (timeFeedbackCodeClean1 > 0) ? Math.max(timeFeedbackCodeClean1 - deltaTime * 3, 0) : 0;
+				timeFeedbackCodeError1 = (timeFeedbackCodeError1 > 0) ? Math.max(timeFeedbackCodeError1 - deltaTime * 3, 0) : 0;
+				let color0 = (timeFeedbackCodeClean1 > timeFeedbackCodeError1) ? 'rgb(190, 255, 190)' : 'rgb(255, 190, 190)';
+				let color = colorLerp(color0, 'rgb(255, 255, 255)', 1 - Math.max(timeFeedbackCodeClean1, timeFeedbackCodeError1));
+				document.getElementById('textCode1').style="background-color: " + rgbToHex(color.r, color.g, color.b) + "; width:100%; height:calc(100% - 20px);";
+			}
+			if ((timeFeedbackCodeClean2 > 0) || (timeFeedbackCodeError2 > 0)) {
+				timeFeedbackCodeClean2 = (timeFeedbackCodeClean2 > 0) ? Math.max(timeFeedbackCodeClean2 - deltaTime * 3, 0) : 0;
+				timeFeedbackCodeError2 = (timeFeedbackCodeError2 > 0) ? Math.max(timeFeedbackCodeError2 - deltaTime * 3, 0) : 0;
+				let color0 = (timeFeedbackCodeClean2 > timeFeedbackCodeError2) ? 'rgb(190, 255, 190)' : 'rgb(255, 190, 190)';
+				let color = colorLerp(color0, 'rgb(255, 255, 255)', 1 - Math.max(timeFeedbackCodeClean2, timeFeedbackCodeError2));
+				document.getElementById('textCode2').style="background-color: " + rgbToHex(color.r, color.g, color.b) + "; width:100%; height:calc(100% - 20px);";
+			}
+			
+			// Cull anything we can...
+			simMan.cullNotInField(field);
+			
+			// Update levelTime...
+			levelTime = Math.max(levelTime - deltaTime, 0);
+			updateTimerAndScoreText();
+			
+			// Update level logic...
+			onLevelUpdate(deltaTime, false);
+
+			// Maybe request another update...
+			if (!hitError && (simMan.isAnyActionHappening() || levelTime > 0)) {
+				setTimeout(advance, 5);
+			} else {
+				resetSimulation(false);
+			}
+		}
+
+		// Kick it off...
+		var timeLastUpdate = Date.now();
+		cancelSimulation = false;
+		document.getElementById('simulateButton').textContent = "Pause Simulation";
+		field.attr({stroke: 'red'});
+		advance();
+    }
+	
+	// Deal with resizing...
+    window.addEventListener('resize', setupApp);
+
+	// First time setup...
+	setupApp();
+</script>
+</body>
+</html>

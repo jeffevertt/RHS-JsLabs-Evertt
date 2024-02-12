@@ -1,0 +1,374 @@
+<html>
+<head/>
+<body>
+  <div id="canvas" style="width:100%; height:70%"></div>
+  <div id="prompts" style="width:100%; height:30%; display: flex; flex-direction: row;">
+	<div style="width:60%; height:100%; float:left">
+	    <label for="code" style="height:20px" title="TODO">Transform & Render Code:</label><br>
+	    <textarea id="code" name="code" style="width:100%; height:calc(100% - 20px);" spellcheck="false"></textarea><br>
+	</div>
+	<div style="width:30%; height:100%">
+		<div style="width:100%; height 100%;">
+			<label for="log">Log:</label><br>
+			<textarea id="log" name="log" style="width:100%; height:calc(100% - 20px);" disabled></textarea><br>
+		</div>
+	</div>
+	<div style="width:10%; height:100%; float:right; padding:3px">
+		<label for="log" style="height:20px">Controls:</label><br>
+		<div style="display: flex; flex-direction: column; width:100%">
+			<button id="simulateButton" onclick="simulateButton()" style="width:100%; padding:3px">Run Code</button>
+			<button id="resetSimulation" onclick="resetButton()" style="width:100%; padding:3px">Reset</button>
+		</div>
+		<br/>
+		<div style="display: flex; flex-direction: column; width:100%">
+			<button id="levelPrevId" onclick="levelPrev()" style="width:100%; padding:3px">Prev Level</button>
+			<button id="levelNextId" onclick="levelNext()" style="width:100%; padding:3px">Next Level</button>
+		</div>
+	</div>
+  </div>
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.1/jquery.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/raphael/2.3.0/raphael.min.js"></script>
+<script src="math.js"></script>
+<script src="vec4.js"></script>
+<script src="vec3.js"></script>
+<script src="vec2.js"></script>
+<script src="mat2x2.js"></script>
+<script src="mat3x3.js"></script>
+<script src="mat4x4.js"></script>
+<script src="utils.js"></script>
+<script src="simulation.js"></script>
+<script src="model-cube.js"></script>
+<script src="model-sphere.js"></script>
+<script>
+    // Globals
+	var canvasSize, raphael, origin, viewPan = vec2.zero();
+	var field = null, titleText = null, titleTextBckGnd = null;
+	var currentLevel = 1;
+	var sim = new Simulation();
+	var deltaTime = 0;
+	var state = { }; // exposed to user script (code state allows user persistent data)
+	var pixelsPerUnit = 20;
+	var supportUserPanning = false;
+	var cancelSimulation = false;
+	
+	// Called on resize, sets things up...
+    function setupApp() {
+		// Create up the Raphael canvas....	
+	    let canvas = document.getElementById("canvas");
+        canvasSize = { w: canvas.offsetWidth, h: canvas.getBoundingClientRect().height };
+		let firstTimeSetup = (raphael == null) ? true : false;
+        if (raphael == null) raphael = Raphael("canvas", canvasSize.w, canvasSize.h);
+		raphael.clear();
+		raphael.setSize(canvasSize.w, canvasSize.h);
+
+		// Reset...
+		titleText = null;
+		titleTextBckGnd = null;
+		
+		// Origin...
+        origin = new vec2(canvasSize.w/2 - viewPan.x, canvasSize.h/2 - viewPan.y);
+		raphael.setViewBox(0, 0, canvasSize.w, canvasSize.h);
+		
+        // Background...
+        field = raphael.rect(0, 0, canvasSize.w, canvasSize.h);
+        field.attr({fill: 'lightgray', stroke: (isSimulationRunning() ? 'red' : 'black'), 'stroke-width': 3});
+		
+		// Coorindate frame...
+		setupGrid();
+		
+		// Ball/Target setup...
+		setupLevelObjects(firstTimeSetup);
+		
+		// Title...
+		setupTitle();
+    }
+	
+	// Key presses...
+	document.body.addEventListener('mousedown', onMouseDown, true);
+	document.body.addEventListener('mouseup', onMouseUp, true);
+	document.body.addEventListener('mousemove', onMouseMove, true);
+	document.body.addEventListener('mousewheel', onMouseWheel, true);
+	document.body.addEventListener('click', onClickFunction, true);
+	var mouseIsDown = null;
+	function onMouseDown(e) {
+		if (supportUserPanning) {
+			let ptPixels = new vec2(e.pageX, e.pageY);
+			let ptCoordFrame = toCoordFrame(ptPixels);
+			if (!inRect(field, ptCoordFrame.x, ptCoordFrame.y, 0.001)) {
+				return;
+			}
+			mouseIsDown = ptPixels;
+		}
+	}
+	function onMouseUp(e) {
+		mouseIsDown = null;
+		if (supportUserPanning) {
+			setupApp();
+		}
+	}
+	function onMouseMove(e) {
+		if (mouseIsDown == null) {
+			return;
+		}
+		viewPan.x -= (e.pageX - mouseIsDown.x);
+		viewPan.y -= (e.pageY - mouseIsDown.y);
+		mouseIsDown.x = e.pageX;
+		mouseIsDown.y = e.pageY;
+		const viewBoxOffset = vec2.subtract(viewPan, vec2.subtract(new vec2(canvasSize.w/2, canvasSize.h/2), origin));
+		raphael.setViewBox(viewBoxOffset.x, viewBoxOffset.y, canvasSize.w, canvasSize.h);
+		field.attr({ x:viewBoxOffset.x, y:viewBoxOffset.y });
+	}
+	function onMouseWheel(e) {
+		let ptCoordFrame = toCoordFrame(new vec2(e.pageX, e.pageY));
+		if (!inRect(field, ptCoordFrame.x, ptCoordFrame.y, 0.001)) {
+			return;
+		}
+		const delta = Math.sign(event.deltaY);
+		const prevPixelsPerUnit = pixelsPerUnit;
+		pixelsPerUnit = Math.round(pixelsPerUnit - delta * 1.5);
+		if (pixelsPerUnit = prevPixelsPerUnit) { // Go at least one...
+			pixelsPerUnit = prevPixelsPerUnit - delta;
+		}
+		pixelsPerUnit = Math.max(Math.min(pixelsPerUnit, 100), 1);
+		viewPan.x += (e.pageX - origin.x) * (pixelsPerUnit - prevPixelsPerUnit) / pixelsPerUnit;
+		viewPan.y += (e.pageY - origin.y) * (pixelsPerUnit - prevPixelsPerUnit) / pixelsPerUnit;
+		setupApp();
+	}
+	function onClickFunction(e) {
+		let x = toCoordFrameX(e.pageX - $(document).scrollLeft() - $('#canvas').offset().left);
+		let y = toCoordFrameY(e.pageY - $(document).scrollTop() - $('#canvas').offset().top);
+		if (!inRect(field, x, y, 0)) {
+			return;
+		}
+
+		// ...
+	}
+	
+	// Window focus...
+	document.addEventListener("visibilitychange", onFocusChanged, false);
+	function onFocusChanged(e) {
+		if (isSimulationRunning()) {
+			resetSimulation(false);
+		}
+	}
+	
+	// Button functions...
+	function simulateButton() {
+		if (document.getElementById('simulateButton').textContent == "Simulate") {
+			simulate();
+		} else {
+			resetSimulation(false);
+		}
+	}
+	function isSimulationRunning() {
+		return (document.getElementById('simulateButton').textContent != "Simulate");
+	}
+	function resetButton() {
+		// Simulation...
+		resetSimulation();
+		
+		// View...
+		pixelsPerUnit = 20;
+		viewPan = vec2.zero();
+		setupApp();
+	}
+	
+	// Grid...
+	function setupGrid() {
+		// Consts...
+		const tickHalfSize = 2;
+		const tickHalfSizeMajor = 5;
+		
+		// Determine coord step (in coordinates)...
+		let coordPerTick = 1;
+		if (pixelsPerUnit <= 4) {
+			coordPerTick = 10;
+		} else if (pixelsPerUnit <= 10) {
+			coordPerTick = 5;
+		} 
+		
+		// Setup...
+		const pixelsPerTick = pixelsPerUnit * coordPerTick;
+		const startPixelX = Math.floor((viewPan.x - canvasSize.w/2) / pixelsPerTick) * pixelsPerTick + canvasSize.w/2;
+		const startPixelY = Math.floor((viewPan.y - canvasSize.h/2) / pixelsPerTick) * pixelsPerTick + canvasSize.h/2;
+		
+		// Main axis...
+		let xaxis = raphael.path(["M", 0, origin.y, "L", canvasSize.w, origin.y]).attr({stroke: "#C0C0C0"}); 	 // x-axis
+		let yaxis = raphael.path(["M", origin.x, 0, "L", origin.x, 0 + canvasSize.h]).attr({stroke: "#C0C0C0"}); // y-axis
+		
+		// Ticks...
+		for (let i = startPixelX; i <= startPixelX + canvasSize.w; i += pixelsPerTick) {
+	        const majorTick = ((i - canvasSize.w/2) % (pixelsPerTick*5) == 0) || (coordPerTick > 1);
+		    const tickHalfSizeLcl = majorTick ? tickHalfSizeMajor : tickHalfSize;
+		    raphael.path(["M", i - viewPan.x, origin.y - tickHalfSizeLcl, "L", i - viewPan.x, origin.y + tickHalfSizeLcl]).attr({stroke: "#C0C0C0"});
+		}
+		for (let i = startPixelY; i <= startPixelY + canvasSize.h; i += pixelsPerTick) {
+	        const majorTick = ((i - canvasSize.h/2) % (pixelsPerUnit*5) == 0) || (coordPerTick > 1);
+		    const tickHalfSizeLcl = majorTick ? tickHalfSizeMajor : tickHalfSize;
+		    raphael.path(["M", origin.x - tickHalfSizeLcl, i - viewPan.y, "L", origin.x + tickHalfSizeLcl, i - viewPan.y]).attr({stroke: "#C0C0C0"});
+		}
+	}
+	
+	// Level setup...
+	function setupTitle() {
+		// Setup...
+		let levelCompleted = false;
+
+		// Figure out the text...
+		let titleStr = "Level " + currentLevel + ": " + levelGoalString();
+		let padding = 5;
+	
+		// Remove if it exists...
+		if (titleText == null) {
+			// Create it up...
+			titleText = raphael.text(toPixelsX(0), 21, titleStr).attr({'font-size':18});
+			let textBBox = titleText.getBBox();
+			titleTextBckGnd = raphael.rect(textBBox.x - padding, textBBox.y - padding, textBBox.width + 2 * padding, textBBox.height + 2 * padding, 4);
+			titleText.toFront();
+		}
+		else {
+			// Update...
+			titleText.attr({text: titleStr});
+			let textBBox = titleText.getBBox();
+			titleTextBckGnd.attr({x: textBBox.x - padding, y: textBBox.y - padding, width: textBBox.width + 2 * padding, height: textBBox.height + 2 * padding });
+		}
+		
+		// Colors...
+		titleText.attr({fill: !levelCompleted ? 'darkblue' : 'darkgreen'});
+		titleTextBckGnd.attr({'fill': !levelCompleted ? 'lightblue' : 'lightgreen', 
+							  'stroke-width': 2, 
+							  'stroke': !levelCompleted ? 'blue' : 'green'});
+	}
+	function levelGoalString() {
+		switch (currentLevel) {
+		case 1 : return "Just draw a line - use drawLine(start, end)";
+		case 2 : return "Create & draw a cube... as is, no transforms";
+		case 3 : return "Add perspective/projection, cube with createCube(10, v3(0,0,20))";
+		case 4 : return "Now, create that cube at origin and add in camera transform to offset it 20";
+		case 5 : return "Rotating cube with perspective (cube, rotating in place)";
+		case 6 : return "Sphere model, add lighting using model normals";
+		case 7 : return "Make an interesting, dynamic scene with multiple objects";
+		}
+		return "<undefined>";
+	}
+	function levelNext() {
+	    currentLevel = (currentLevel == 7) ? currentLevel : (currentLevel + 1);
+		resetSimulation();
+	}
+	function levelPrev() {
+	    currentLevel = (currentLevel == 1) ? 1 : (currentLevel - 1);
+		resetSimulation();
+	}
+	function setupLevelObjects(fullReset = false) {
+		// Reset field color...
+		field.attr({fill: 'lightgray'});
+		
+		// Title...
+		setupTitle();
+	}
+	
+	// Simulation...
+	function setupSimulation() {
+		// User code...
+		if (!executeCode()) {
+			return false;
+		}
+		
+		return true;
+	}
+	function resetSimulation(fullReset = true) {
+		// Maybe reset the simulation...
+		if (fullReset) {
+			// Sim reset
+			sim.reset();
+			
+			// Reset user state
+			state = { };
+			
+			// Setup level...
+			setupLevelObjects();
+		}
+
+		// Cancel us out of the simulation (if it's currently running)...
+		cancelSimulation = true;
+		document.getElementById('simulateButton').textContent = "Simulate";
+		field.attr({stroke: 'black'});
+		
+		// Clear the log...
+		if (fullReset) {
+			if (document.getElementById('log') != null) document.getElementById('log').value = '';
+		}
+	}
+
+	// User code...
+	function executeCode() {
+		let code = document.getElementById('code').value;
+		try {
+			eval(code);
+		} catch (error) {
+		    document.getElementById('log').value += error + "\n";
+			return false;
+		}
+		return true;
+	}
+
+	// Simulation function...
+    function simulate() {
+		// Sim tick function...
+		var advance = function() {
+			// Check for cancelled...
+			if (cancelSimulation) {
+				resetSimulation(false);
+				return;
+			}
+			
+			// Step the sim...
+			let timeNow = Date.now()
+			deltaTime = (timeNow - timeLastUpdate) / 1000;
+			timeLastUpdate = timeNow;
+			
+			// Clamp deltaTime (slow down the sim, if needed)...
+			deltaTime = Math.min(deltaTime, 1/10);
+			
+			// User code...
+			sim.resetUserGfx();
+			if (!executeCode()) {
+				return false;
+			}
+			
+			// Sim manager...
+			let hitError = !sim.update(deltaTime);
+			if (!hitError) {
+				// ...
+			}
+
+			// Maybe request another update...
+			if (!hitError && !sim.shouldStopSimulation()) {
+				setTimeout(advance, 5);
+			} else {
+				resetSimulation(false);
+			}
+		}
+		
+		// Setup...
+		if (!setupSimulation()) {
+			return;
+		}
+		
+		// Kick it off...
+		var timeLastUpdate = Date.now();
+		cancelSimulation = false;
+		sim.timeReadyToStopSim = 0;
+		document.getElementById('simulateButton').textContent = "Pause Sim";
+		field.attr({stroke: 'red'});
+		advance();
+    }
+	
+	// Deal with resizing...
+    window.addEventListener('resize', setupApp);
+
+	// First time setup...
+	setupApp();
+</script>
+</body>
+</html>

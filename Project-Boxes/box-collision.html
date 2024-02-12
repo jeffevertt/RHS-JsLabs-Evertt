@@ -1,0 +1,461 @@
+<html>
+<head/>
+<body>
+  <div id="canvas" style="width:100%; height:70%"></div>
+  <div id="prompts" style="width:100%; height:30%; display: flex; flex-direction: row;">
+	<div style="width:60%; height:100%; float:left">
+	    <label for="code" style="height:20px" title="VARIABLES&#10;  ball {&#10;    pos { x, y },&#10;    vel { x, y },&#10;    rad,&#10;  }&#10;  box {&#10;    pos { x, y },&#10;    halfDims { x, y },&#10;    basisX { x, y },&#10;    basisY { x, y },&#10;  }&#10;&#10;FUNCTIONS&#10;  log(text)&#10  sqrt(x), max(x,y), min(x,y), clamp(x, min, max), abs(x)&#10;  sin(x), cos(x), tan(x)&#10;  asin(x), acos(x), atan(x), atan2(y,x)&#10;&#10;  dot(v,u), unit(v),&#10;  length(v), lengthSqr(v), distance(v), distanceSqr(v),&#10;  add(v,u), subtract(v,u), multiply(v,s), divide(v,s)&#10;&#10;VECTORS&#10;  Define: v2(1,0)&#10;  Ops:    add(v,u), subtract(v,u), multiply(v,2)&#10;  Ops:    dot(v,u), unit(v), length(v), distance(v,u)&#10;  Ops:    rotate(v, angle)&#10;  Other:  vec2.right, vec2.left, vec2.up, vec2.right">Update code (call for each box/ball pair):</label><br>
+	    <textarea id="code" name="code" style="width:100%; height:calc(100% - 20px);" spellcheck="false"></textarea><br>
+	</div>
+	<div style="width:30%; height:100%">
+		<div style="width:100%; height 100%;">
+			<label for="log">Log:</label><br>
+			<textarea id="log" name="log" style="width:100%; height:calc(100% - 20px);" disabled></textarea><br>
+		</div>
+	</div>
+	<div style="width:10%; height:100%; float:right; padding:3px">
+		<label for="log" style="height:20px">Controls:</label><br>
+		<div style="display: flex; flex-direction: column; width:100%">
+			<button id="simulateButton" onclick="simulateButton()" style="width:100%; padding:3px">Run Code</button>
+			<button id="resetSimulation" onclick="resetButton()" style="width:100%; padding:3px">Reset</button>
+		</div>
+		<br/>
+		<div style="display: flex; flex-direction: column; width:100%">
+			<button id="levelPrevId" onclick="levelPrev()" style="width:100%; padding:3px">Prev Level</button>
+			<button id="levelNextId" onclick="levelNext()" style="width:100%; padding:3px">Next Level</button>
+		</div>
+	</div>
+  </div>
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.1/jquery.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/raphael/2.3.0/raphael.min.js"></script>
+<script src="math.js"></script>
+<script src="vec3.js"></script>
+<script src="vec2.js"></script>
+<script src="utils.js"></script>
+<script src="simulation.js"></script>
+<script>
+    // Globals
+	var canvasSize = null, raphael = null, origin = null, viewPan = vec2.zero();
+	var field = null, titleText = null, titleTextBckGnd = null;
+	var currentLevel = 1;
+	var pixelsPerUnit = 20;
+	var simMan = new SimulationManager();
+	var cancelSimulation = false;
+	
+	// For code access...
+	var ball = {
+	    position: new vec2(0,0),
+		velocity: new vec2(0,0)
+	};
+	var box = {
+		position: new vec2(0, 0),
+		halfDimX: new vec2(1, 0),
+		halfDimY: new vec2(1, 0)
+	};
+	var ballRadius = 1;
+	var gravity = new vec2(0, 0);
+	var deltaTime = 0;
+	var state = { }; // exposed to user script (code state allows user persistent data)
+
+	// Called on resize, sets things up...
+    function setupApp() {
+		// Create up the Raphael canvas....	
+	    let canvas = document.getElementById("canvas");
+        canvasSize = { w: canvas.offsetWidth, h: canvas.getBoundingClientRect().height };
+		let firstTimeSetup = (raphael == null) ? true : false;
+        if (raphael == null) {
+		    raphael = Raphael("canvas", canvasSize.w, canvasSize.h);
+		} else if (simMan != null) {
+			simMan.destroyAll();
+		}
+		raphael.clear();
+		raphael.setSize(canvasSize.w, canvasSize.h);
+		
+		// Reset...
+		titleText = null;
+		titleTextBckGnd = null;
+
+		// Origin...
+        origin = new vec2(canvasSize.w/2 - viewPan.x, canvasSize.h/2 - viewPan.y);
+		raphael.setViewBox(0, 0, canvasSize.w, canvasSize.h);
+		
+        // Background...
+        field = raphael.rect(0, 0, canvasSize.w, canvasSize.h);
+        field.attr({fill: 'lightgray', stroke: (isSimulationRunning() ? 'red' : 'black'), 'stroke-width': 3});
+		
+		// Coorindate frame...
+		setupGrid();
+		
+		// Ball/Target setup...
+		setupLevelObjects(firstTimeSetup);
+		
+		// Title...
+		setupTitle();
+    }
+	
+	// Key presses...
+	document.body.addEventListener('mousedown', onMouseDown, true);
+	document.body.addEventListener('mouseup', onMouseUp, true);
+	document.body.addEventListener('mousemove', onMouseMove, true);
+	document.body.addEventListener('mousewheel', onMouseWheel, true);
+	document.body.addEventListener('click', onClickFunction, true);
+	var mouseIsDown = null;
+	function onMouseDown(e) {
+		// Deal with panning...
+		let pageX = e.pageX - $(document).scrollLeft() - $('#canvas').offset().left;
+		let pageY = e.pageY - $(document).scrollTop() - $('#canvas').offset().top;
+		let ptPixels = new vec2(pageX, pageY);
+		let ptCoordFrame = toCoordFrame(ptPixels);
+		if (!inRect(field, ptCoordFrame.x, ptCoordFrame.y, 0.001)) {
+			return;
+		}
+		mouseIsDown = ptPixels;
+		
+		// Launch a ball...
+		createBallAtCoorindate(ptCoordFrame);
+		
+		// Get the sim running, if not already...
+		if (!isSimulationRunning()) {
+			simulate();
+		}
+	}
+	function createBallAtCoorindate(ptCoordFrame) {
+		let ballSpeed = 17.5;
+		let ballVelocity = vec2.multiply(vec2.subtract(simMan.getBallTargetPos(), ptCoordFrame).unit(), ballSpeed);
+		simMan.createBall(ptCoordFrame, ballVelocity, ballRadius);
+	}
+	function onMouseUp(e) {
+		//mouseIsDown = null;
+		//setupApp();
+	}
+	function onMouseMove(e) {
+		//if (mouseIsDown == null) {
+		//	return;
+		//}
+		//let pageX = e.pageX - $(document).scrollLeft() - $('#canvas').offset().left;
+		//let pageY = e.pageY - $(document).scrollTop() - $('#canvas').offset().top;
+		//viewPan.x -= (pageX - mouseIsDown.x);
+		//viewPan.y -= (pageY - mouseIsDown.y);
+		//mouseIsDown.x = pageX;
+		//mouseIsDown.y = pageY;
+		//const viewBoxOffset = vec2.subtract(viewPan, vec2.subtract(new vec2(canvasSize.w/2, canvasSize.h/2), origin));
+		//raphael.setViewBox(viewBoxOffset.x, viewBoxOffset.y, canvasSize.w, canvasSize.h);
+		//field.attr({ x:viewBoxOffset.x, y:viewBoxOffset.y });
+	}
+	function onMouseWheel(e) {
+		//let pageX = e.pageX - $(document).scrollLeft() - $('#canvas').offset().left;
+		//let pageY = e.pageY - $(document).scrollTop() - $('#canvas').offset().top;
+		//let ptCoordFrame = toCoordFrame(new vec2(pageX, pageY));
+		//if (!inRect(field, ptCoordFrame.x, ptCoordFrame.y, 0.001)) {
+		//	return;
+		//}
+		//const delta = Math.sign(event.deltaY);
+		//const prevPixelsPerUnit = pixelsPerUnit;
+		//pixelsPerUnit = Math.round(pixelsPerUnit - delta * 1.5);
+		//if (pixelsPerUnit = prevPixelsPerUnit) { // Go at least one...
+		//	pixelsPerUnit = prevPixelsPerUnit - delta;
+		//}
+		//pixelsPerUnit = Math.max(Math.min(pixelsPerUnit, 100), 1);
+		//viewPan.x += (pageX - origin.x) * (pixelsPerUnit - prevPixelsPerUnit) / pixelsPerUnit;
+		//viewPan.y += (pageY - origin.y) * (pixelsPerUnit - prevPixelsPerUnit) / pixelsPerUnit;
+		//setupApp();
+	}
+	function onClickFunction(e) {
+		// Note: This is just for points outside of the field...
+		let pageX = e.pageX - $(document).scrollLeft() - $('#canvas').offset().left;
+		let pageY = e.pageY - $(document).scrollTop() - $('#canvas').offset().top;
+		let x = toCoordFrameX(pageX - $(document).scrollLeft() - $('#canvas').offset().left);
+		let y = toCoordFrameY(pageY - $(document).scrollTop() - $('#canvas').offset().top);
+		if (!inRect(field, x, y, 0)) {
+			return;
+		}
+	}
+	
+	// Window focus...
+	document.addEventListener("visibilitychange", onFocusChanged, false);
+	function onFocusChanged(e) {
+		if (isSimulationRunning()) {
+			resetSimulation(false);
+		}
+	}
+	
+	// Button functions...
+	function simulateButton() {
+		if (document.getElementById('simulateButton').textContent == "Simulate") {
+			// If there are no balls, lets create one...
+			if (!simMan.isAnyActionHappening()) {
+				createBallAtCoorindate(new vec2(randRange(-20, 20), randRange(-15, 15)));
+			}
+			
+			// Kick off the sim...
+			simulate();
+		} else {
+			resetSimulation(false);
+		}
+	}
+	function isSimulationRunning() {
+		return (document.getElementById('simulateButton').textContent != "Simulate");
+	}
+	function resetButton() {
+		// Simulation...
+		resetSimulation();
+		
+		// View...
+		pixelsPerUnit = 20;
+		viewPan = vec2.zero();
+		setupApp();
+	}
+
+	// Grid...
+	function setupGrid() {
+		// Consts...
+		const tickHalfSize = 2;
+		const tickHalfSizeMajor = 5;
+		
+		// Determine coord step (in coordinates)...
+		let coordPerTick = 1;
+		if (pixelsPerUnit <= 4) {
+			coordPerTick = 10;
+		} else if (pixelsPerUnit <= 10) {
+			coordPerTick = 5;
+		} 
+		
+		// Setup...
+		const pixelsPerTick = pixelsPerUnit * coordPerTick;
+		const startPixelX = Math.floor((viewPan.x - canvasSize.w/2) / pixelsPerTick) * pixelsPerTick + canvasSize.w/2;
+		const startPixelY = Math.floor((viewPan.y - canvasSize.h/2) / pixelsPerTick) * pixelsPerTick + canvasSize.h/2;
+		
+		// Main axis...
+		let xaxis = raphael.path(["M", 0, origin.y, "L", canvasSize.w, origin.y]); 		// x-axis
+		let yaxis = raphael.path(["M", origin.x, 0, "L", origin.x, 0 + canvasSize.h]); 	// y-axis
+		
+		// Ticks...
+		for (let i = startPixelX; i <= startPixelX + canvasSize.w; i += pixelsPerTick) {
+	        const majorTick = ((i - canvasSize.w/2) % (pixelsPerTick*5) == 0) || (coordPerTick > 1);
+		    const tickHalfSizeLcl = majorTick ? tickHalfSizeMajor : tickHalfSize;
+		    raphael.path(["M", i - viewPan.x, origin.y - tickHalfSizeLcl, "L", i - viewPan.x, origin.y + tickHalfSizeLcl]);
+		}
+		for (let i = startPixelY; i <= startPixelY + canvasSize.h; i += pixelsPerTick) {
+	        const majorTick = ((i - canvasSize.h/2) % (pixelsPerUnit*5) == 0) || (coordPerTick > 1);
+		    const tickHalfSizeLcl = majorTick ? tickHalfSizeMajor : tickHalfSize;
+		    raphael.path(["M", origin.x - tickHalfSizeLcl, i - viewPan.y, "L", origin.x + tickHalfSizeLcl, i - viewPan.y]);
+		}
+	}
+	
+	// Level setup...
+	function setupTitle() {
+		// Figure out the text...
+		let titleStr = "Level " + currentLevel + ": " + levelGoalString();
+		let padding = 5;
+	
+		// Remove if it exists...
+		if (titleText == null) {
+			// Create it up...
+			titleText = raphael.text(toPixelsX(0), 21, titleStr).attr({'font-size':18});
+			let textBBox = titleText.getBBox();
+			titleTextBckGnd = raphael.rect(textBBox.x - padding, textBBox.y - padding, textBBox.width + 2 * padding, textBBox.height + 2 * padding, 4);
+			titleText.toFront();
+		}
+		else {
+			// Update...
+			titleText.attr({text: titleStr});
+			let textBBox = titleText.getBBox();
+			titleTextBckGnd.attr({x: textBBox.x - padding, y: textBBox.y - padding, width: textBBox.width + 2 * padding, height: textBBox.height + 2 * padding });
+		}
+		
+		// Colors...
+		titleText.attr({fill: 'darkblue'});
+		titleTextBckGnd.attr({'fill': 'lightblue', 
+							  'stroke-width': 2, 
+							  'stroke': 'blue'});
+	}
+	function levelGoalString() {
+		switch (currentLevel) {
+		case 1 : return "AABB / Pt (stop / no bounce)";
+		case 2 : return "AABB / Sphere (stop / no bounce)";
+		case 3 : return "OBB / Pt (stop / no bounce)";
+		case 4 : return "OBB / Sphere (stop / no bounce)";
+		case 5 : return "AABB / Pt (bounce)";
+		case 6 : return "AABB / Sphere (bounce)";
+		case 7 : return "OBB / Pt (bounce)";
+		case 8 : return "OBB / Sphere (bounce)";
+		case 9 : return "Rotating OBB / Sphere (bounce)";
+		}
+		return "<undefined>";
+	}
+	function levelNext() {
+	    currentLevel = (currentLevel == 9) ? currentLevel : (currentLevel + 1);
+		resetSimulation();
+	}
+	function levelPrev() {
+	    currentLevel = (currentLevel == 1) ? 1 : (currentLevel - 1);
+		resetSimulation();
+	}
+	function setupLevelObjects(fullReset = false) {
+		// Defaults...
+		gravity = new vec2(0, 0);
+		
+		// Positions by level...
+		let padding = 2;
+		let boxPos = new vec2(randRange(-10,10), randRange(-10,10));
+		let boxHalfDims = new vec2(5, 2.5);
+		let angle = randRange(10, 170); // Note: only used on a couple of levels
+		switch (currentLevel) {
+		case 1 : 
+			simMan.createBox(boxPos, new vec2(boxHalfDims.x,0), new vec2(0,boxHalfDims.y), "plum");
+			ballRadius = 0.1;
+			break;
+		case 2 : 
+			simMan.createBox(boxPos, new vec2(boxHalfDims.x,0), new vec2(0,boxHalfDims.y), "plum");
+			ballRadius = 1;
+			break;
+		case 3 : 
+			simMan.createBox(boxPos, (new vec2(boxHalfDims.x,0)).rotate(angle), (new vec2(0,boxHalfDims.y)).rotate(angle), "plum");
+			ballRadius = 0.1;
+			break;
+		case 4 : 
+			simMan.createBox(boxPos, (new vec2(boxHalfDims.x,0)).rotate(angle), (new vec2(0,boxHalfDims.y)).rotate(angle), "plum");
+			ballRadius = 1;
+			break;
+		case 5 : 
+			simMan.createBox(boxPos, new vec2(boxHalfDims.x,0), new vec2(0,boxHalfDims.y), "lightblue");
+			ballRadius = 0.1;
+			break;
+		case 6 : 
+			simMan.createBox(boxPos, new vec2(boxHalfDims.x,0), new vec2(0,boxHalfDims.y), "lightblue");
+			ballRadius = 1;
+			break;
+		case 7 : 
+			simMan.createBox(boxPos, (new vec2(boxHalfDims.x,0)).rotate(angle), (new vec2(0,boxHalfDims.y)).rotate(angle), "lightblue");
+			ballRadius = 0.1;
+			break;
+		case 8 : 
+			simMan.createBox(boxPos, (new vec2(boxHalfDims.x,0)).rotate(angle), (new vec2(0,boxHalfDims.y)).rotate(angle), "lightblue");
+			ballRadius = 1;
+			break;
+		case 9 : 
+			simMan.createBox(boxPos, (new vec2(boxHalfDims.x,0)).rotate(angle), (new vec2(0,boxHalfDims.y)).rotate(angle), "hotpink", -35);
+			ballRadius = 1;
+			break;
+		default :
+			break;
+		}
+		
+		// Reset field color...
+		field.attr({fill: 'lightgray'});
+		
+		// Title...
+		setupTitle();
+	}
+	
+	// Simulation...
+	function setupSimulation() {
+		// ...
+		return true;
+	}
+	function resetSimulation(fullReset = true) {
+		// Cancel us out of the simulation (if it's currently running)...
+		cancelSimulation = true;
+		document.getElementById('simulateButton').textContent = "Simulate";
+		field.attr({stroke: 'black'});
+		
+		// Maybe populate defaults...
+		if (fullReset) {
+			simMan.destroyAll();
+			setupLevelObjects(fullReset);
+
+			// Reset user state
+			state = { };
+		}
+		
+		// UI updates...
+		document.getElementById("levelPrevId").disabled = (currentLevel <= 1) ? true : false;
+		document.getElementById("levelNextId").disabled = (currentLevel >= 9) ? true : false;		
+		
+		// Clear the log...
+		if (fullReset) {
+			if (document.getElementById('log') != null) document.getElementById('log').value = '';
+		}
+		
+		// Tell the simulation about it...
+		simMan.update(0);
+	}
+
+	// User code...
+	function executeCode() {
+		document.getElementById('log').value = '';
+		let code = document.getElementById('code').value;
+		try {
+			eval(code);
+		} catch (error) {
+		    document.getElementById('log').value += error + "\n";
+			return false;
+		}
+		return true;
+	}
+
+	// Simulation function...
+    function simulate() {
+		// Sim tick function...
+		var advance = function() {
+			// Check for cancelled...
+			if (cancelSimulation) {
+				resetSimulation(false);
+				return;
+			}
+			
+			// Step the sim...
+			let timeNow = Date.now()
+			deltaTime = Math.min(((timeNow - timeLastUpdate) / 1000), 0.25);
+			timeLastUpdate = timeNow;
+			
+			// Clamp deltaTime (slow down the sim, if needed)...
+			deltaTime = Math.min(deltaTime, 1/10);
+			
+			// Sim manager...
+			simMan.update(isSimulationRunning() ? deltaTime : 0);
+			
+			// Code update...
+			let hitError = false;
+			let code = document.getElementById('code').value;
+			if (!simMan.execCode(code)) {
+				hitError = true;
+			}
+			
+			// Cull anything we can...
+			simMan.cullNotInField(field);
+			
+			// Maybe request another update...
+			if (!hitError && simMan.isAnyActionHappening()) {
+				setTimeout(advance, 5);
+			} else {
+				// Update title text...
+				setupTitle();
+
+				// We're done...
+				resetSimulation(false);
+			}
+		}
+		
+		// Setup...
+		if (!setupSimulation()) {
+			return;
+		}
+		
+		// Kick it off...
+		var timeLastUpdate = Date.now();
+		cancelSimulation = false;
+		document.getElementById('simulateButton').textContent = "Pause Sim";
+		field.attr({stroke: 'red'});
+		advance();
+    }
+	
+	// Deal with resizing...
+    window.addEventListener('resize', setupApp);
+
+	// First time setup...
+	setupApp();
+	resetSimulation(true);
+</script>
+</body>
+</html>

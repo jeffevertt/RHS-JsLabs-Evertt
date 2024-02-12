@@ -1,0 +1,185 @@
+﻿<!DOCTYPE html>
+
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+    <meta charset="utf-8" />
+    <title>Class Leaderboard Tester</title>
+
+    <style>
+        body {
+            background-image: url("rhs-background.jpg");
+            background-repeat: no-repeat, repeat;
+            background-color: #FFFFFF;
+        }
+        .content {
+            width: 80%;
+            margin-left: auto;
+            margin-right: auto;
+        }
+    </style>
+</head>
+
+<body>
+    <script type="text/javascript">
+        function doResetRequest() {
+            cancelPolling = true;
+            (async () => {
+                const data = {
+                    TableName: 'classLeaderboardTable',
+                    EventType: 'resetLeaderboard',
+                    Item: {
+                        'periodKey': ("" + document.getElementById('periodId').value),
+                        'Students': []
+                    }
+                };
+                const rawResponse = await fetch('https://u9m0v5iwsk.execute-api.us-west-2.amazonaws.com/default/classBuzzer', {
+                    method: 'POST',
+                    headers: {
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                });
+                const content = await rawResponse.json();
+                //console.log(JSON.stringify(content));
+
+                // Set the response on the UI element...
+                let uiResponse = document.getElementById('serverResponseId');
+                uiResponse.innerHTML = content.response;
+
+                // Clear the response after a time...
+                //setTimeout(function () { uiResponse.innerHTML = ""; }, 5000);
+            })();
+        }
+        function doLeaderboardPost() {
+            //document.getElementsByTagName("BODY")[0].style.backgroundColor = "yellow";
+
+            (async () => {
+                let studentName = document.getElementById('studentNameId').value;
+				let studentScore = document.getElementById('studentScoreId').value;
+                const data = {
+                    TableName: 'classLeaderboardTable',
+                    EventType: 'postLeaderboardStudent',
+                    Item: {
+                        'periodKey': ("" + document.getElementById('periodId').value),
+                        'StudentName': studentName,
+						'score': studentScore,
+                    }
+                };
+                const rawResponse = await fetch('https://u9m0v5iwsk.execute-api.us-west-2.amazonaws.com/default/classBuzzer', {
+                    method: 'POST',
+                    headers: {
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                });
+                const content = await rawResponse.json();
+                //console.log(JSON.stringify(content));
+
+                // Set the response on the UI element...
+                let uiResponse = document.getElementById('serverResponseId');
+                uiResponse.innerHTML = content.response;
+
+                // Clear the response after a time...
+                setTimeout(function () { uiResponse.innerHTML = ""; }, 3000);
+            })();
+        }
+		function doZElevatorConfig() {
+			(async () => {
+                let configStr = document.getElementById('zElevatorConfigId').value;
+                const data = {
+                    TableName: 'classLeaderboardTable',
+                    EventType: 'setZelevatorConfig',
+                    Item: {
+                        'Config': configStr
+                    }
+                };
+                const rawResponse = await fetch('https://u9m0v5iwsk.execute-api.us-west-2.amazonaws.com/default/classBuzzer', {
+                    method: 'POST',
+                    headers: {
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                });
+                const content = await rawResponse.json();
+                //console.log(JSON.stringify(content));
+
+                // Set the response on the UI element...
+                let uiResponse = document.getElementById('serverResponseId');
+                uiResponse.innerHTML = content.response;
+
+                // Clear the response after a time...
+                setTimeout(function () { uiResponse.innerHTML = ""; }, 3000);
+            })();
+		}
+		function getZElevatorConfig() {
+			(async () => {
+                const data = {
+                    TableName: 'classLeaderboardTable',
+                    EventType: 'getZelevatorConfig',
+                };
+                const rawResponse = await fetch('https://u9m0v5iwsk.execute-api.us-west-2.amazonaws.com/default/classBuzzer', {
+                    method: 'POST',
+                    headers: {
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                });
+                const content = await rawResponse.json();
+                console.log(JSON.stringify(content));
+
+                // Set the response on the UI element...
+                let uiResponse = document.getElementById('serverResponseId');
+                uiResponse.innerHTML = content.response;
+            })();
+		}
+        function resetUpdateEnabled() {
+			let inputOne = document.getElementById('periodId');
+            if (inputOne.value.length > 0) {
+                document.getElementById('resetButtonId').disabled = false;
+            } else {
+                document.getElementById('resetButtonId').disabled = true;
+            }
+        }		
+        function submitUpdateEnabled() {
+			let inputOne = document.getElementById('periodId');
+            let inputTwo = document.getElementById('studentNameId');
+            let inputThree = document.getElementById('studentScoreId');
+            if ((inputOne.value.length > 0) && (inputTwo.value.length > 0) && (inputThree.value.length > 0)) {
+                document.getElementById('submitButtonId').disabled = false;
+            } else {
+                document.getElementById('submitButtonId').disabled = true;
+            }
+        }
+    </script>
+
+    <div class="content">
+        <h1 style="font-size : 40px; width: 100%;">Class Leaderboard Tester</h1>
+        <form>
+            <label for="periodId" style="font-size : 25px;">Period:</label>
+            <input type="text" id="periodId" name="period" oninput="resetUpdateEnabled()" style="font-size : 25px; width: 65px" value="">
+			<br>
+			<input id="resetButtonId" name="resetButton" type="button" value="Clear Leaderboard" onclick="doResetRequest()" style="font-size : 30px; width: 400px; height: 50px;" disabled /><BR><BR>
+            <br><br>
+            <label for="studentNameId" style="font-size : 25px;">Student name:</label>
+            <input type="text" id="studentNameId" name="studentName" oninput="submitUpdateEnabled()" style="font-size : 25px;">
+            <br>
+            <label for="studentScoreId" style="font-size : 25px;">Student score:</label>
+            <input type="text" id="studentScoreId" name="studentScore" oninput="submitUpdateEnabled()" style="font-size : 25px;">
+            <br>
+            <input id="submitButtonId" name="submitButton" type="button" value="Submit Score" onclick="doLeaderboardPost()" style="font-size : 30px; width: 100%; height: 50px;" disabled />
+            <br><br><br>
+			<label for="zElevatorConfigId" style="font-size : 25px;">Zelevator Config:</label>
+            <input type="text" id="zElevatorConfigId" name="zElevatorConfig" style="font-size : 25px; " value="120;8;2;2.0">
+			<input id="zElevatorConfigButtonId" name="zElevatorConfigButton" type="button" value="Set Zelevator Config" onclick="doZElevatorConfig()" style="font-size : 30px; width: 100%; height: 50px;" />
+			<input id="GETzElevatorConfigButtonId" name="GETzElevatorConfigButton" type="button" value="Get Zelevator Config" onclick="getZElevatorConfig()" style="font-size : 30px; width: 100%; height: 50px;" />
+			<br>
+            <label id="serverResponseId" style="font-size : 35px;color:blueviolet"></label>
+        </form>
+    </div>
+</body>
+
+</html>

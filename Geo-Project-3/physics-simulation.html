@@ -1,0 +1,356 @@
+<html>
+<head/>
+<body>
+  <div id="canvas" style="width:100%; height:60%"></div>
+  <div id="prompts" style="width:100%; height:40%; display: flex; flex-direction: row;">
+	<div id="divBallWall" style="width:35%; height:100%; float:left">
+		<label for="codeBallWall" title="VARIABLES&#10;  ball {&#10;	position { x, y },&#10;	velocity { x, y },&#10;	radius&#10;  }&#10;  wall {&#10;	point { x, y },&#10;	direction { x, y },&#10;	normal { x, y },&#10;	angle&#10;  }&#10;&#10;FUNCTIONS&#10;  log(text)&#10;&#10;  sqrt(x), max(x,y), min(x,y), abs(x)&#10;  sin(x), cos(x), tan(x)&#10;  asin(x), acos(x), atan(x), atan2(y,x)&#10;&#10;  dot(v,u), length(v), unit(v),&#10;  add(v,u), subtract(v,u), multiply(v,s), divide(v,s)">Ball/Wall Code (ball,wall):</label><br>
+		<textarea id="codeBallWall" name="codeBallWall" style="width:100%; height:calc(100% - 20px);" spellcheck="false"></textarea><br>
+	</div>
+	<div id="divBallBall" style="width:35%; height:100%; float:left">
+		<label for="codeBallBall" title="VARIABLES&#10;  ball {&#10;	position { x, y },&#10;	velocity { x, y },&#10;	radius&#10;  }&#10;  other {&#10;	position { x, y },&#10;	velocity { x, y },&#10;	radius&#10;  }&#10;&#10;FUNCTIONS&#10;  log(text)&#10;&#10;  sqrt(x), max(x,y), min(x,y), abs(x)&#10;  sin(x), cos(x), tan(x)&#10;  asin(x), acos(x), atan(x), atan2(y,x)&#10;&#10;  dot(v,u), length(v), unit(v),&#10;  add(v,u), subtract(v,u), multiply(v,s), divide(v,s)">Ball/Ball Code (ball,other):</label><br>
+		<textarea id="codeBallBall" name="codeBallBall" style="width:100%; height:calc(100% - 20px);" spellcheck="false"></textarea><br>
+	</div>
+	<div style="width:20%; height:100%">
+		<div style="width:100%; height 100%;">
+			<label for="log">Log:</label><br>
+			<textarea id="log" name="log" style="width:100%; height:calc(100% - 20px);" disabled></textarea><br>
+		</div>
+	</div>
+	<div style="width:10%; height:100%; float:right; padding:3px">
+		<label for="log" style="height:20px">Controls:</label><br>
+		<div style="display: flex; flex-direction: column; width:100%">
+			<button id="simulateButton" onclick="simulateButton()" style="width:100%; padding:3px">Run Code</button>
+			<button id="resetSimulation" onclick="resetButton()" style="width:100%; padding:3px">Reset</button>
+		</div>
+		<div>
+			<input type="checkbox" id="debugMode" name="debugMode" onclick='onDebugModeChanged()'>
+			<label for="debugMode">Debug Mode</label>
+		</div>
+		<br/>
+		<div style="display: flex; flex-direction: column; width:100%">
+			<button id="levelPrevId" onclick="levelPrev()" style="width:100%; padding:3px">Prev Level</button>
+			<button id="levelNextId" onclick="levelNext()" style="width:100%; padding:3px">Next Level</button>
+		</div>
+		<br/>
+		<div style="display: flex; flex-direction: column; width:100%">
+			<button id="zoomInButton" onclick="zoomButton(1)" style="width:100%; padding:3px">Zoom In</button>
+			<button id="zoomOutButton" onclick="zoomButton(-1)" style="width:100%; padding:3px">Zoom Out</button>
+		</div>
+	</div>
+  </div>
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.1/jquery.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/raphael/2.3.0/raphael.min.js"></script>
+<script src="math.js"></script>
+<script src="vec2.js"></script>
+<script src="utils.js"></script>
+<script src="simulation.js"></script>
+<script>
+    // Globals
+	var currentLevel = 1;
+	var canvasSize, raphael, origin;
+	var field, levelText;
+	var simMan = new SimulationManager();
+	var pixelsPerUnit = 20;
+	var fieldStrokeWidth = 3;
+	var cancelSimulation = false;
+	var ball, other, wall; // Code accessed objects (need them to be globals)...
+	
+	// Called on resize, sets things up...
+    function setupApp() {
+		// Create up the Raphael canvas....	
+	    let canvas = document.getElementById("canvas");
+        canvasSize = { w: canvas.offsetWidth, h: canvas.getBoundingClientRect().height };
+        if (raphael == null) raphael = Raphael("canvas", canvasSize.w, canvasSize.h);
+		raphael.clear();
+		raphael.setSize(canvasSize.w, canvasSize.h);
+		
+        // Background...
+        field = raphael.rect(0, 0, canvasSize.w, canvasSize.h);
+        field.attr({fill: 'lightgray', stroke: 'black', 'stroke-width': fieldStrokeWidth});
+		
+		// Clicking the background functions...
+		field.click(function() {
+			// Toggle simulation...
+			if (document.getElementById('simulateButton').textContent != "Simulate") {
+				resetSimulation(false);
+			}
+			else {
+				simulate();
+			}
+		});
+		field.dblclick(function() {
+			resetSimulation();
+		});
+		
+		// Coorindate frame...
+		let cfTickWidth = 4;
+		let cfTickPixelsPerTick = pixelsPerUnit;
+		let xaxis = raphael.path(["M", 0, canvasSize.h/2, "L", canvasSize.w, canvasSize.h/2]); 		// draw the x-axis
+		let yaxis = raphael.path(["M", canvasSize.w/2, 0, "L", canvasSize.w/2, canvasSize.h]); 		// draw the y-axis
+		for (let i = 0; i <= canvasSize.w/2; i += cfTickPixelsPerTick) {   							// draw the tick marks
+	        let majorTick = ((i % (5 * cfTickPixelsPerTick)) == 0) ? true : false;
+		    let cfTickWidthLcl = majorTick ? cfTickWidth * 2 : cfTickWidth;
+		    let p1 = raphael.path(["M", canvasSize.w/2 + i, canvasSize.h/2 - cfTickWidthLcl/2, "L", canvasSize.w/2 + i, canvasSize.h/2 + cfTickWidthLcl/2]);
+		    let p2 = raphael.path(["M", canvasSize.w/2 - i, canvasSize.h/2 - cfTickWidthLcl/2, "L", canvasSize.w/2 - i, canvasSize.h/2 + cfTickWidthLcl/2]);
+		    if (majorTick) p1.attr({ "stroke-width": 2 });
+		    if (majorTick) p2.attr({ "stroke-width": 2 });
+		}
+		for (let i = 0; i <= canvasSize.h/2; i += cfTickPixelsPerTick) {
+		    let majorTick = ((i % (5 * cfTickPixelsPerTick)) == 0) ? true : false;
+		    let cfTickWidthLcl = majorTick ? cfTickWidth * 2 : cfTickWidth;
+		    let p1 = raphael.path(["M", canvasSize.w/2 - cfTickWidthLcl/2, canvasSize.h/2 + i, "L", canvasSize.w/2 + cfTickWidthLcl/2, canvasSize.h/2 + i]);
+		    let p2 = raphael.path(["M", canvasSize.w/2 - cfTickWidthLcl/2, canvasSize.h/2 - i, "L", canvasSize.w/2 + cfTickWidthLcl/2, canvasSize.h/2 - i]);
+		    if (majorTick) p1.attr({ "stroke-width": 2 });
+		    if (majorTick) p2.attr({ "stroke-width": 2 });
+		}
+		
+		// Level text...
+		levelText = raphael.text(4, 12, "");
+		levelText.attr({ "text-anchor": "start", "font-size": 18, "font-family": "Arial, sans-serif", "font-weight": "bold", "fill": "#6666EE" });
+		
+        // Origin...
+        origin = { x:canvasSize.w/2, y: canvasSize.h/2 };
+		
+		// And do a reset...
+		resetSimulation();
+    }
+	
+	// Level functions...
+	function calcLevelDesc(level) {
+		switch (level) {
+			case 1  : return "STOP the balls colliding with the WALL";
+			case 2  : return "STOP the balls colliding with the WALL";
+			case 3  : return "STOP the balls colliding with WALLS";
+			case 4  : return "BOUNCE balls off the WALLS";
+			case 5  : return "BOUNCE balls off the WALLS";
+			case 6  : return "STOP the balls when they collide with other BALLS";
+			case 7  : return "STOP the balls when they collide with other BALLS";
+			case 8  : return "BOUNCE balls off other BALLS";
+			case 9  : return "BOUNCE balls off other BALLS - consider MASS";
+			case 10  : return "BOUNCE balls off other BALLS - consider MASS";
+			case 11  : return "BOUNCE the balls off WALLS & BALLS";
+		}
+	}
+	function onLevelSetup() {
+		// Level specific objects...
+		switch (currentLevel) {
+			case 1  : 
+				simMan.createWall(15, -5, 0, 1, -1, 0);
+				spawnBallsAroundOrigin(10, 5, 10);
+				break;
+			case 2  : 
+				simMan.createWall( 20.707, 0.707, 0.707, 0.707, -0.707,  0.707);
+				spawnBallsAroundOrigin(10, 5, 10);
+				break;
+			case 3  : 
+				simMan.createWall( 20.707, 0.707, 0.707, 0.707, -0.707,  0.707);
+				simMan.createWall(-20.707, -0.707, 0.707, 0.707,  0.707, -0.707);
+				spawnBallsAroundOrigin(10, 5, 10);
+				break;
+			case 4  : 
+				simMan.createWall( 15, 0, 0, 1, -1, 0);
+				simMan.createWall(-15, 0, 0, 1,  1, 0);
+				spawnBallsAroundOrigin(11, 5, 10);
+				break;
+			case 5  : 
+				simMan.createWall(  0, -20, -0.707, 0.707,  0.707,  0.707);
+				simMan.createWall( 20.707, 0.707, 0.707, 0.707, -0.707,  0.707);
+				simMan.createWall(-20.707, -0.707, 0.707, 0.707,  0.707, -0.707);
+				spawnBallsAroundOrigin(6, 5, 10);
+				break;
+			case 6  : 
+				spawnBallsAroundOrigin(2, 10, -10);
+				break;
+			case 7  : 
+				if (!isDebugMode()) { simMan.createBall( 10, 5, -10,  0, 1); }
+				if (!isDebugMode()) { simMan.createBall(-10, 5,  10,  0, 1); }
+				simMan.createBall(  0,10,   0,-20, 1);
+				simMan.createBall(  0,-8,   0,  0, 5);
+				break;
+			case 8  : 
+				simMan.createBall( 10,  0.8, -10, 0, 1);
+				simMan.createBall(-10, -0.8,  10, 0, 1);
+				break;
+			case 9  : 
+				simMan.createBall(  0, 2.5,  0, 0, 2);
+				simMan.createBall(-10, 0, 10, 0, 1);
+				break;
+			case 10  : 
+				simMan.createBall(  0,  0,   0,  0, 5);
+				simMan.createBall(  0,-15,   0, 20, 1);
+				if (!isDebugMode()) { simMan.createBall(-13,  0,  10,  0, 1); }
+				if (!isDebugMode()) { simMan.createBall( 20, 15, -10, -5, 2); }
+				break;
+			case 11  : 
+				simMan.createWall(  0, -20, -0.707, 0.707,  0.707,  0.707);
+				simMan.createWall( 20,   0,  0.707, 0.707, -0.707,  0.707);
+				simMan.createWall(-20,   0,  0.707, 0.707,  0.707, -0.707);
+				spawnBallsAroundOrigin(10, 5, 10);
+				break;
+		}
+		
+		// Level text...
+		levelText.attr({ "text":"level " + currentLevel + " (" + calcLevelDesc(currentLevel) + ")" });
+		levelText.toFront();
+		
+		// Resize code windows by mode...
+		if (currentLevel <= 5) {
+			document.getElementById("divBallWall").style.display = "block";
+			document.getElementById("divBallWall").style = "width:70%";
+			document.getElementById("divBallBall").style.display = "none";
+			
+			document.getElementById("codeBallBall").value = "";
+		}
+		else if (currentLevel <= 10) {
+			document.getElementById("divBallWall").style.display = "none";
+			document.getElementById("divBallBall").style.display = "block";
+			document.getElementById("divBallBall").style = "width:70%";
+
+			document.getElementById("codeBallWall").value = "";
+		}
+		else {
+			document.getElementById("divBallWall").style.display = "block";
+			document.getElementById("divBallWall").style = "width:35%";
+			document.getElementById("divBallBall").style.display = "block";
+			document.getElementById("divBallBall").style = "width:35%";
+		}
+	}
+	function levelNext() {
+	    currentLevel = (currentLevel == 11) ? currentLevel : (currentLevel + 1);
+		resetSimulation();
+	}
+	function levelPrev() {
+	    currentLevel = (currentLevel == 1) ? 1 : (currentLevel - 1);
+		resetSimulation();
+	}
+	function onLevelChanged() {
+		levelText.toFront();
+		resetSimulation();
+	}
+	function isDebugMode() {
+		return document.getElementById("debugMode").checked;
+	}
+	function onDebugModeChanged() {
+		resetSimulation();
+	}
+	function spawnBallsAroundOrigin(ballCount, spawnRadius, speed, ballRadius = 1) {
+		if (isDebugMode()) {
+			ballCount = 1;
+		}
+		for (let i = 0; i < ballCount; ++i) {
+			let angle = i * (360 / ballCount);
+			let ballPos = vec2.multiply(new vec2(cos(angle), sin(angle)), spawnRadius);
+			let ballVel = vec2.multiply(ballPos.unit(), speed);
+			simMan.createBall(ballPos.x, ballPos.y, ballVel.x, ballVel.y, ballRadius);
+		}
+	}
+	
+	// Zoom...
+	function zoomButton(change) {
+		let zoomLevels = [ 5, 7.5, 10, 13, 17, 20, 22, 25, 30, 35 ];
+		let currentLevel = 4;
+		for (let i = 0; i < zoomLevels.length; ++i) {
+			if (pixelsPerUnit == zoomLevels[i]) {
+				currentLevel = i;
+				break;
+			}
+		}
+		currentLevel = Math.min(Math.max(currentLevel + change, 0), zoomLevels.length - 1);
+		if (zoomLevels[currentLevel] != pixelsPerUnit) {
+			pixelsPerUnit = zoomLevels[currentLevel];
+			setupApp();
+		}
+		document.getElementById('zoomOutButton').disabled = (currentLevel == 0);
+		document.getElementById('zoomInButton').disabled = (currentLevel == zoomLevels.length - 1);
+	}
+	
+	// Button functions (launch, execCode)...
+	function simulateButton() {
+		if (document.getElementById('simulateButton').textContent == "Simulate") {
+			if (simMan.shouldStopSimulation()) {
+				resetSimulation();
+			}
+			simulate();
+		} else {
+			resetSimulation(false);
+		}
+	}
+	function resetButton() {
+		resetSimulation();
+	}
+	
+	// Simulation: Reset...
+	function resetSimulation(fullReset = true) {
+		// Maybe destroy all objects...
+		if (fullReset) {
+			simMan.destroyAll();
+		}
+
+		// Cancel us out of the simulation (if it's currently running)...
+		cancelSimulation = true;
+		document.getElementById('simulateButton').textContent = "Simulate";
+		field.attr({stroke: 'black'});
+		
+		// Clear the log...
+		if (fullReset) {
+			document.getElementById('log').value = '';
+		}
+		
+		// Setup for the level...
+		if (fullReset) {
+			onLevelSetup();
+		}
+	}	
+
+	// Simulation function...
+    function simulate() {
+		// Simulation function...
+		var advance = function() {
+			// Check for cancelled...
+			if (cancelSimulation) {
+				resetSimulation(false);
+				return;
+			}
+			
+			// Setup...
+			let codeBallWall = document.getElementById('codeBallWall').value;
+			let codeBallBall = document.getElementById('codeBallBall').value;
+			
+			// Step the sim...
+			let timeNow = Date.now()
+			let deltaTime = (timeNow - timeLastUpdate) / 1000;
+			timeLastUpdate = timeNow;
+			
+			// Clamp deltaTime (slow down the sim, if needed)...
+			deltaTime = Math.min(deltaTime, 1/10);
+			
+			// Sim manager...
+			simMan.update(deltaTime);
+			let hitError = !simMan.doCollisionCode(codeBallWall, codeBallBall);
+			simMan.cullNotInField(field);
+
+			// Maybe request another update...
+			if (!hitError && !simMan.shouldStopSimulation()) {
+				setTimeout(advance, 5);
+			} else {
+				resetSimulation(false);
+			}
+		}
+
+		// Kick it off...
+		var timeLastUpdate = Date.now();
+		cancelSimulation = false;
+		document.getElementById('simulateButton').textContent = "Stop Simulation";
+		field.attr({stroke: 'red'});
+		advance();
+    }
+	
+	// Deal with resizing...
+    window.addEventListener('resize', setupApp);
+
+	// First time setup...
+	setupApp();
+</script>
+</body>
+</html>

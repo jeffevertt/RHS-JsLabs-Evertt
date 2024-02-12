@@ -1,0 +1,586 @@
+<html>
+<head>
+  <style>
+    #canvas {
+      width: 100%;
+	  height: 85%;
+    }
+
+    #prompts {
+      width: 100%;
+	  height: 15%;
+    }
+  </style>
+</head>
+<body>
+  <div id="canvas"></div>
+  <div id="prompts" style="display: flex; flex-direction: row;">
+	<div style="width:100%">
+	  <div id="divMode" style="float: left; width: 300px; height: 80%; border: 2px solid black; border-radius: 10px; padding: 10px;">
+	    <label>MODE</label><br>
+	    <input type="radio" id="modeEditor" name="mode-group" value="Edit Bridge" onchange="modeChanged()">
+		<label for="modeEditor" style="color: red">Edit Bridge</label><br>
+
+		<input type="radio" id="modeTest" name="mode-group" value="Test Bridge" checked onchange="modeChanged()">
+		<label for="modeTest" style="color: blue">Test Bridge</label><br>
+		<br/>
+		<div style="display: flex; flex-direction: row; width:100%; height: 20px">
+			<button id="zoomInButton" onclick="zoomButton(1)" style="width:50%">Zoom In</button>
+			<button id="zoomOutButton" onclick="zoomButton(-1)" style="width:50%">Zoom Out</button>
+		</div>
+	  </div>
+	  <div id="divEdit" style="float: right; width: 300px; height: 80%; border: 2px solid red; border-radius: 10px; padding: 10px;">
+		<input type="radio" id="editTypeFloor" name="edit-type-group" value="Add Floor" onchange="editorTypeChanged()">
+		<label for="editTypeFloor">Add Floor</label><br/>
+		<input type="radio" id="editTypeSupport" name="edit-type-group" value="Add Support" checked onchange="editorTypeChanged()">
+		<label for="editTypeSupport">Add Support</label><br/>
+		<input type="radio" id="editTypeRemoveLink" name="edit-type-group" value="Remove Link" onchange="editorTypeChanged()">
+		<label for="editTypeRemoveLink">Remove Link</label><br/><br/>
+	  
+		<button id="editorResetBridge" onclick="editorResetBridge()" style="width:100%; height: 20px">Delete All</button>
+	  </div>
+	  <div id="divTest" style="float: right; width: 300px; height: 80%; border: 2px solid blue; border-radius: 10px; padding: 10px;">
+		<button id="simulateButton" onclick="simulateButton()" style="width:20%; display:none">Simulate</button>
+		
+		<label for="testRadius">Test Load Radius</label>
+		<input type="range" id="testRadius" name="testRadius" min="1" max="10" step="0.01" value="1.5" oninput="testRadiusChanged()">
+		<label for="testRadius" id="testRadiusValue">1 in</label><br/>
+		
+		<div style="display: flex; flex-direction: row; width:100%; height: 20px">
+			<button id="testButton" onclick="testButton()" style="width:50%">Test</button>
+			<button id="resetSimulation" onclick="resetButton()" style="width:50%">Reset</button><br/><br/>
+		</div></br>
+
+		<label id="testStats" style="padding: 5px;">Stats:</label><br/>
+		<label id="testStats1" style="padding: 20px;">(no test data)</label><br/>
+		<label id="testStats2" style="padding: 20px;"></label><br/>
+	  </div>
+    </div>
+  </div>
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.1/jquery.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/raphael/2.3.0/raphael.min.js"></script>
+<script src="math.js"></script>
+<script src="vec2.js"></script>
+<script src="utils.js"></script>
+<script src="simulation.js"></script>
+<script>
+    // Globals
+	var canvasSize, raphael, origin, mode;
+	var field, landLeft, landRight;
+	var sim = new Simulation();
+	var userBridge = null; // { verts:BridgeVertex[], segs:BridgeSegment[] }
+	var pixelsPerUnit = 20;
+	var cancelSimulation = false;
+	
+	// Globals (editor)...
+	var editIsPlacingLink = null; // { pt1:vec2, gfxPt:circle, pt1VertIdx:int, gfxRect:rect }
+	
+	// Called on resize, sets things up...
+    function setupApp() {
+		// Create up the Raphael canvas....	
+	    let canvas = document.getElementById("canvas");
+        canvasSize = { w: canvas.offsetWidth, h: canvas.getBoundingClientRect().height };
+        if (raphael == null) raphael = Raphael("canvas", canvasSize.w, canvasSize.h);
+		raphael.clear();
+		raphael.setSize(canvasSize.w, canvasSize.h);
+		
+		// Origin...
+        origin = { x:canvasSize.w/2, y: canvasSize.h*2/3 };
+		
+        // Background...
+        field = raphael.rect(0, 0, canvasSize.w, canvasSize.h);
+        field.attr({fill: 'lightgray', stroke: 'black', 'stroke-width': 3});
+		
+		// Land...
+		let landWidth = toPixelsLength(-19.5 - toCoordFrameX(0));
+		if (landWidth > 0) {
+			landLeft = raphael.rect(-10, toPixelsY(0), landWidth + 10, 100, 10).attr({fill: 'darkgreen', stroke: 'black', 'stroke-width': 2});
+			landRight = raphael.rect(canvasSize.w - landWidth, toPixelsY(0), landWidth + 10, 100, 10).attr({fill: 'darkgreen', stroke: 'black', 'stroke-width': 2});
+		}
+		
+		// Mouse event functions...
+		field.dblclick(function() {
+			if (modeIsEdit()) {
+				editorOnDoubleClick();
+			}
+			else {
+				resetSimulation();
+			}
+		});
+		field.mousemove(function(e) {
+			if (modeIsEdit()) {
+				let posx = e.pageX - $(document).scrollLeft() - $('#canvas').offset().left;
+				let posy = e.pageY - $(document).scrollTop() - $('#canvas').offset().top;
+				editorOnMouseMove(toCoordFrameX(posx), toCoordFrameY(posy));
+			}
+		});
+		
+		// Coorindate frame...
+		let cfTickWidth = 4;
+		let cfTickPixelsPerTick = pixelsPerUnit;
+		let xaxis = raphael.path(["M", 0, origin.y, "L", canvasSize.w, origin.y]); 		// draw the x-axis
+		let yaxis = raphael.path(["M", origin.x, 0, "L", origin.x, canvasSize.h]); 		// draw the y-axis
+		for (let i = 0; i <= origin.x; i += cfTickPixelsPerTick) {   							// draw the tick marks
+	        let majorTick = ((i % (5 * cfTickPixelsPerTick)) == 0) ? true : false;
+		    let cfTickWidthLcl = majorTick ? cfTickWidth * 2 : cfTickWidth;
+		    let p1 = raphael.path(["M", origin.x + i, origin.y - cfTickWidthLcl/2, "L", origin.x + i, origin.y + cfTickWidthLcl/2]);
+		    let p2 = raphael.path(["M", origin.x - i, origin.y - cfTickWidthLcl/2, "L", origin.x - i, origin.y + cfTickWidthLcl/2]);
+		    if (majorTick) p1.attr({ "stroke-width": 2 });
+		    if (majorTick) p2.attr({ "stroke-width": 2 });
+		}
+		for (let i = 0; i <= origin.y; i += cfTickPixelsPerTick) {
+		    let majorTick = ((i % (5 * cfTickPixelsPerTick)) == 0) ? true : false;
+		    let cfTickWidthLcl = majorTick ? cfTickWidth * 2 : cfTickWidth;
+		    let p1 = raphael.path(["M", origin.x - cfTickWidthLcl/2, origin.y + i, "L", origin.x + cfTickWidthLcl/2, origin.y + i]);
+		    let p2 = raphael.path(["M", origin.x - cfTickWidthLcl/2, origin.y - i, "L", origin.x + cfTickWidthLcl/2, origin.y - i]);
+		    if (majorTick) p1.attr({ "stroke-width": 2 });
+		    if (majorTick) p2.attr({ "stroke-width": 2 });
+		}
+		
+		// Setup mode...
+		modeChanged(true);
+		
+		// And do a reset...
+		resetSimulation();
+    }
+	
+	// Key presses...
+	document.addEventListener("keydown", function(event) {
+		const key = event.key; // Or const {key} = event; in ES6+
+		if (key === "Escape") {
+			if (modeIsEdit()) {
+				editorOnEscape();
+			}
+		}
+	});
+	document.body.addEventListener('click', onClickFunction, true); 
+	
+	// Button functions...
+	function modeIsEdit() {
+		return document.getElementById('modeEditor').checked;
+	}
+	function modeEditSaveBridge() {
+		userBridge = { verts:[], segs:[] };
+		for (let i = 0; i < sim.bridge.verts.length; ++i) {
+			userBridge.verts.push(new BridgeVertex(sim.bridge.verts[i].pos, sim.bridge.verts[i].fixed));
+		}
+		for (let i = 0; i < sim.bridge.segs.length; ++i) {
+			userBridge.segs.push(new BridgeSegment(sim.bridge.segs[i].vertId0, sim.bridge.segs[i].vertId1, sim.bridge.segs[i].isFloor));
+		}
+	}
+	function modeChanged(firstTime = false) {
+		// Figure out the mode...
+		mode = document.getElementById('modeEditor').checked ? "edit" : "test";
+		
+		// UI...
+		document.getElementById('divEdit').style.display = (mode == "edit") ? "block" : "none";
+		document.getElementById('divTest').style.display = (mode == "test") ? "block" : "none";
+		
+		// If we are moving out of edit mode, save off the bridge...
+		if (!firstTime && (!modeIsEdit())) {
+			modeEditSaveBridge();
+		}
+		
+		// Lets force resets...
+		resetSimulation(true);
+		editorOnEscape();
+		
+		// Updated...
+		testRadiusChanged();
+	}
+	function testRadiusChanged() {
+		document.getElementById('testRadiusValue').textContent = (document.getElementById('testRadius').value + " in");
+	}
+	function resetTextStats() {
+		setTestStats(0, '(no test data)');
+		setTestStats(1, '');
+	}
+	function setTestStats(line, text) {
+		document.getElementById((line == 0) ? 'testStats1' : 'testStats2').textContent = text;
+	}
+	function simulateButton() {
+		if (document.getElementById('simulateButton').textContent == "Simulate") {
+			simulate();
+		} else {
+			resetSimulation(false);
+		}
+	}
+	function isSimulationRunning() {
+		return (document.getElementById('simulateButton').textContent != "Simulate");
+	}
+	function testButton() {
+		// Setup test...
+		sim.endTest();
+		sim.testLoadRadius = parseFloat(document.getElementById('testRadius').value);
+		sim.beginTest();
+		
+		// Reset test stats...
+		resetTextStats();
+		
+		// Kick off sim (if not kicked off already)...
+		if (!isSimulationRunning()) {
+			simulate();
+		}
+	}
+	function resetButton() {
+		resetSimulation();
+		resetTextStats();
+	}
+	
+	// Editor...
+	function onClickFunction(e) {
+		let x = toCoordFrameX(e.pageX - $(document).scrollLeft() - $('#canvas').offset().left);
+		let y = toCoordFrameY(e.pageY - $(document).scrollTop() - $('#canvas').offset().top);
+		if (!inRect(field, x, y, 0)) {
+			return;
+		}
+
+		// Test mode...
+		if (!modeIsEdit()) {
+			// Toggle simulation...
+			if (document.getElementById('simulateButton').textContent != "Simulate") {
+				resetSimulation(false);
+			}
+			else {
+				simulate();
+			}
+			return;
+		}
+		
+		// Edit: add floor/support...
+		if (editorIsAddFloor() || editorIsAddSupport()) {
+			editorOnClickAdd(x, y);
+		}
+		else {
+			editorOnClickRem(x, y);
+		}
+	}
+	function editorIsAddFloor() {
+		return modeIsEdit() && (document.getElementById('editTypeFloor').checked);
+	}
+	function editorAllowAddFloor(addingSegLen) {
+		// Figure how much we already have, if it's too much, then don't allow it...
+		let totalFloorLen = sim.bridge.calcTotalFloorLength() + addingSegLen;
+		return (totalFloorLen <= 50);
+	}
+	function editorIsAddSupport() {
+		return modeIsEdit() && (document.getElementById('editTypeSupport').checked);
+	}
+	function editorIsRemoveLink() {
+		return modeIsEdit() && (document.getElementById('editTypeRemoveLink').checked);
+	}
+	function editorTypeChanged() {
+		if (editorIsRemoveLink()) {
+			editorOnEscape();
+		}
+	}
+	function editorPlacementSnapTo(pt) { // returns { pos:vec2, vertIdx:int }
+		// See if there is already a vertex to snap to...
+		for (let i = 0; i < sim.bridge.verts.length; ++i) {
+			if (sim.bridge.verts[i].pos.distance(pt) < 1) {
+				return { pos: sim.bridge.verts[i].pos, vertIdx:i, segIdx:-1 };
+			}
+		}
+		
+		// Next check if we are clicking on an existing segment...
+		for (let i = 0; i < sim.bridge.segs.length; ++i) {
+			let intersectResult = sim.bridge.segs[i].intersectsSphere(pt, 0.3)
+			if (intersectResult.intersects) {
+				return { pos: intersectResult.closestPoint, vertIdx:-1, segIdx:i };
+			}
+		}
+		
+		// Otherwise snap to closest whole number...
+		return { pos: new vec2(Math.round(pt.x), Math.round(pt.y)), vertIdx:-1, segIdx:-1 };
+	}
+	function editorOnClickRem(x, y) {
+		// Remove any segments we are clicking on...
+		let anyRemoved = false;
+		for (let i = 0; i < sim.bridge.segs.length; ++i) {
+			let bridgeSegment = sim.bridge.segs[i];
+			if (intersectSphereSegment(new vec2(x, y), 0.4, bridgeSegment.getVert(0).pos, vec2.subtract(bridgeSegment.getVert(1).pos, bridgeSegment.getVert(0).pos)).intersects) {
+				// Remove this one...
+				bridgeSegment.resetGfx();
+				sim.bridge.segs.splice(i, 1);
+				
+				// Flag it...
+				anyRemoved = true;
+				
+				// Done...
+				i = sim.bridge.segs.length;
+				break;
+			}
+		}
+		
+		// If none removed, then we're done...
+		if (!anyRemoved) {
+			return;
+		}
+		
+		// Clear any verts that are no longer used...
+		sim.bridge.deleteAnyStrayVerts();
+		sim.createBridgeGfx();
+	}
+	function editorOnClickAdd(x, y) {
+		let snapTo = editorPlacementSnapTo(new vec2(x, y));
+		if (editIsPlacingLink != null) {
+			// Min length...
+			if (editIsPlacingLink.pt1.distance(snapTo.pos) > 2) {
+				// If there is an existing vertex, use that - otherwise create new verts...
+				// Note that if we are clicking on a existing segment, we're going to need to break it (addVertex does that for us)...
+				let pt1Id = editIsPlacingLink.pt1VertIdx
+				if (pt1Id < 0) {
+					pt1Id = sim.bridge.addVertex(editIsPlacingLink.pt1, editIsPlacingLink.pt1SegIdx);
+				}
+				let pt2Id = snapTo.vertIdx;
+				if (pt2Id < 0) {
+					pt2Id = sim.bridge.addVertex(snapTo.pos, snapTo.segIdx);
+				}
+				
+				// Figure out the length of this segment...
+				let lenNewSeg = sim.bridge.verts[pt1Id].pos.distance( sim.bridge.verts[pt2Id].pos );
+				
+				// Add the segment...
+				sim.bridge.addSegment(pt1Id, pt2Id, editorIsAddFloor() && editorAllowAddFloor(lenNewSeg));
+				sim.createBridgeGfx();
+			}
+			else {
+				console.log("Segment is too short, ignoring it");
+			}
+			
+			// Done, reset things...
+			editorOnEscape();
+		}
+		else {
+			// First click...
+			editIsPlacingLink = { pt1: snapTo.pos, pt1VertIdx: snapTo.vertIdx, pt1SegIdx: snapTo.segIdx };
+			let fillColor = (snapTo.vertIdx >= 0) ? 'pink' : ((snapTo.segIdx < 0) ? 'yellow' : 'blue');
+			editIsPlacingLink.gfxPt = raphael.circle(toPixelsX(snapTo.pos.x), toPixelsY(snapTo.pos.y), toPixelsLength(0.4)).attr({stroke: 'red', 'stroke-width': 2, fill: fillColor});
+		}
+	}
+	function editorOnDoubleClick() {
+		// Something?
+	}
+	function editorOnMouseMove(x, y) {
+		if (editIsPlacingLink != null) {
+			let snapTo = editorPlacementSnapTo(new vec2(x, y));
+			
+			// Remove old previs...
+			if ((editIsPlacingLink.gfxRect != null) && (editIsPlacingLink.gfxRect != undefined)) {
+				editIsPlacingLink.gfxRect.remove();
+				editIsPlacingLink.gfxRect = null;
+			}
+			
+			// Update the previs (editIsPlacingLink.gfxRect)...
+			editIsPlacingLink.gfxRect = raphaelRect(editIsPlacingLink.pt1, snapTo.pos, 'darkgray', 'red');
+			
+			// Keep the point at the front...
+			if (editIsPlacingLink.gfxPt != null) {
+				editIsPlacingLink.gfxPt.toFront();
+			}
+		}
+	}
+	function editorOnEscape() {
+		if (editIsPlacingLink != null) {
+			if ((editIsPlacingLink.gfxPt != null) && (editIsPlacingLink.gfxPt != undefined)) {
+				editIsPlacingLink.gfxPt.remove();
+				editIsPlacingLink.gfxPt = null;
+			}
+			if ((editIsPlacingLink.gfxRect != null) && (editIsPlacingLink.gfxRect != undefined)) {
+				editIsPlacingLink.gfxRect.remove();
+				editIsPlacingLink.gfxRect = null;
+			}
+			editIsPlacingLink = null;
+		}
+	}
+	function editorResetBridge() {
+		userBridge = null;
+		sim.bridge.reset();
+		editorOnEscape();
+	}
+	
+	// Zoom...
+	function zoomButton(change) {
+		let zoomLevels = [ 10, 13, 17, 20, 22, 25, 30 ];
+		let currentLevel = 3;
+		for (let i = 0; i < zoomLevels.length; ++i) {
+			if (pixelsPerUnit == zoomLevels[i]) {
+				currentLevel = i;
+				break;
+			}
+		}
+		currentLevel = Math.min(Math.max(currentLevel + change, 0), zoomLevels.length - 1);
+		if (zoomLevels[currentLevel] != pixelsPerUnit) {
+			// If in edit mode, save off the state first...
+			if (modeIsEdit()) {
+				modeEditSaveBridge();
+			}
+			
+			// Re-setup with the new scale...
+			pixelsPerUnit = zoomLevels[currentLevel];
+			setupApp();
+		}
+		document.getElementById('zoomOutButton').disabled = (currentLevel == 0);
+		document.getElementById('zoomInButton').disabled = (currentLevel == zoomLevels.length - 1);
+	}
+	
+	// Simulation...
+	function setupSimulation() {
+		// If we have a user constructed bridge, use that - otherwise fill in a premade bridge...
+		if (userBridge != null) {
+			for (let i = 0; i < userBridge.verts.length; ++i) {
+				sim.bridge.verts.push(new BridgeVertex(userBridge.verts[i].pos, userBridge.verts[i].fixed));
+			}
+			for (let i = 0; i < userBridge.segs.length; ++i) {
+				sim.bridge.segs.push(new BridgeSegment(userBridge.segs[i].vertId0, userBridge.segs[i].vertId1, userBridge.segs[i].isFloor));
+			}
+		}
+		else if (0) {
+			let id0 = sim.bridge.addVertex(v2(-20,  0));
+			let id1 = sim.bridge.addVertex(v2( 20,  0));
+			sim.bridge.addSegment(id0, id1, true);
+		}
+		else if (1) {
+			let id0 = sim.bridge.addVertex(v2(-20,  0));
+			let id1 = sim.bridge.addVertex(v2(  0, 10));
+			let id2 = sim.bridge.addVertex(v2(  0,  0));
+			let id3 = sim.bridge.addVertex(v2( 20,  0));
+			sim.bridge.addSegment(id0, id1);
+			sim.bridge.addSegment(id0, id2, true);
+			sim.bridge.addSegment(id1, id3);
+			sim.bridge.addSegment(id2, id3, true);
+			sim.bridge.addSegment(id1, id2);
+		} 
+		else if (1) {
+			let id0 = sim.bridge.addVertex(v2(-20,  0));
+			let id1 = sim.bridge.addVertex(v2(-10, 10));
+			let id2 = sim.bridge.addVertex(v2(  0,  0));
+			let id3 = sim.bridge.addVertex(v2( 10, 10));
+			let id4 = sim.bridge.addVertex(v2( 20,  0));
+			sim.bridge.addSegment(id0, id1);
+			sim.bridge.addSegment(id0, id2, true);
+			sim.bridge.addSegment(id1, id2);
+			sim.bridge.addSegment(id2, id3);
+			sim.bridge.addSegment(id2, id4, true);
+			sim.bridge.addSegment(id3, id4);
+			sim.bridge.addSegment(id1, id3);
+		} 
+		else if (1) {
+			// Test bridge B...
+			let id0 = sim.bridge.addVertex(v2( -20,  0));
+			let id1 = sim.bridge.addVertex(v2( -10,  0));
+			let id2 = sim.bridge.addVertex(v2(   0,  0));
+			let id3 = sim.bridge.addVertex(v2(  10,  0));
+			let id4 = sim.bridge.addVertex(v2(  20,  0));
+			let id5 = sim.bridge.addVertex(v2( -15, 10));
+			let id6 = sim.bridge.addVertex(v2(  -5, 10));
+			let id7 = sim.bridge.addVertex(v2(   5, 10));
+			let id8 = sim.bridge.addVertex(v2(  15, 10));
+			sim.bridge.addSegment(id0, id1, true);
+			sim.bridge.addSegment(id1, id2, true);
+			sim.bridge.addSegment(id2, id3, true);
+			sim.bridge.addSegment(id3, id4, true);
+			sim.bridge.addSegment(id0, id5);
+			sim.bridge.addSegment(id5, id1);
+			sim.bridge.addSegment(id1, id6);
+			sim.bridge.addSegment(id6, id2);
+			sim.bridge.addSegment(id2, id7);
+			sim.bridge.addSegment(id7, id3);
+			sim.bridge.addSegment(id3, id8);
+			sim.bridge.addSegment(id8, id4);
+			sim.bridge.addSegment(id5, id6);
+			sim.bridge.addSegment(id6, id7);
+			sim.bridge.addSegment(id7, id8);
+		}
+		
+		// Setup our gfx & the sim...
+		sim.createBridgeGfx();
+	}
+	function resetSimulation(fullReset = true) {
+		// Maybe destroy all objects...
+		if (fullReset) {
+			sim.reset();
+		}
+
+		// Cancel us out of the simulation (if it's currently running)...
+		cancelSimulation = true;
+		document.getElementById('simulateButton').textContent = "Simulate";
+		field.attr({stroke: 'black'});
+		
+		// Clear the log...
+		if (fullReset) {
+			if (document.getElementById('log') != null) document.getElementById('log').value = '';
+			resetTextStats();
+		}
+		
+		// Setup for the level...
+		if (fullReset) {
+			setupSimulation();
+		}
+		else if (!modeIsEdit()) {
+			sim.createBridgeGfx();
+		}
+	}
+	
+	function onResizeWindow() {
+		if (modeIsEdit()) {
+			modeEditSaveBridge();
+		}
+		setupApp();
+	}
+
+	// Simulation function...
+    function simulate() {
+		// Create up the sim...
+		if (!sim.isSimCreated()) {
+			sim.createSim();
+		}
+
+		// Sim tick function...
+		var advance = function() {
+			// Check for cancelled...
+			if (cancelSimulation) {
+				resetSimulation(false);
+				return;
+			}
+			
+			// Step the sim...
+			let timeNow = Date.now()
+			let deltaTime = (timeNow - timeLastUpdate) / 1000;
+			timeLastUpdate = timeNow;
+			
+			// Clamp deltaTime (slow down the sim, if needed)...
+			//deltaTime = Math.min(deltaTime, 1/30);
+			
+			// Sim manager...
+			let hitError = !sim.update(deltaTime);
+			if (!hitError) {
+				sim.updateGfx();
+				sim.updateDebugGfx();
+			}
+
+			// Maybe request another update...
+			if (!hitError && !sim.shouldStopSimulation(deltaTime)) {
+				setTimeout(advance, 5);
+			} else {
+				resetSimulation(false);
+			}
+		}
+
+		// Kick it off...
+		var timeLastUpdate = Date.now();
+		cancelSimulation = false;
+		sim.timeReadyToStopSim = 0;
+		document.getElementById('simulateButton').textContent = "Stop Simulation";
+		field.attr({stroke: 'red'});
+		advance();
+    }
+	
+	// Deal with resizing...
+    window.addEventListener('resize', onResizeWindow);
+
+	// First time setup...
+	setupApp();
+</script>
+</body>
+</html>

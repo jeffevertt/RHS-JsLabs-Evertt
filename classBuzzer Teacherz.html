@@ -1,0 +1,187 @@
+﻿<!DOCTYPE html>
+
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+    <meta charset="utf-8" />
+    <title>Teacher Buzzer</title>
+
+    <style>
+        body {
+            background-image: url("rhs-background-teacher.jpg");
+            background-repeat: no-repeat, repeat;
+            background-color: #E4EED9;
+        }
+        .content {
+            width: 80%;
+            margin-left: auto;
+            margin-right: auto;
+        }
+    </style>
+</head>
+
+<body>
+    <script type="text/javascript">
+        var cancelPolling = false;
+        function doResetRequest() {
+            cancelPolling = true;
+            (async () => {
+                const data = {
+                    TableName: 'classBuzzerTable',
+                    EventType: 'resetStudentList',
+                    Item: {
+                        'classBuzzerPartitionKey': '1',
+                        'Students': []
+                    }
+                };
+                const rawResponse = await fetch('https://u9m0v5iwsk.execute-api.us-west-2.amazonaws.com/default/classBuzzer', {
+                    method: 'POST',
+                    headers: {
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                });
+                const content = await rawResponse.json();
+                //console.log(JSON.stringify(content));
+
+                // Set the response on the UI element...
+                let uiResponse = document.getElementById('serverResponseId');
+                uiResponse.innerHTML = content.response;
+
+                // Clear the response after a time...
+                //setTimeout(function () { uiResponse.innerHTML = ""; }, 5000);
+            })();
+        }
+        const poll = async ({ fn, interval, maxAttempts }) => {
+            let attempts = 0;
+
+            const executePoll = async (resolve, reject) => {
+                if (!cancelPolling) {
+                    const result = await fn();
+                }
+                attempts++;
+
+                if (cancelPolling || (maxAttempts && attempts === maxAttempts)) {
+                    // Done looping...
+                    document.getElementById('checkForUpdateId').disabled = false;
+                } else {
+                    setTimeout(executePoll, interval, resolve, reject);
+                }
+            };
+
+            return new Promise(executePoll);
+        };
+        function pollForUpdate() {
+            // Disable the button...
+            cancelPolling = false;
+            document.getElementById('checkForUpdateId').disabled = true;
+
+            // Poll it...
+            const POLL_INTERVAL = 2000;
+            const MAX_ATTEMPTS = Math.max(document.getElementById('pollForSecondsId').value / (POLL_INTERVAL/1000), 1);
+            const pollForNewUser = poll({
+                fn: doCheckForUpdate,
+                interval: POLL_INTERVAL,
+                maxAttempts: MAX_ATTEMPTS,
+            }).catch(err => console.error(err));
+        }
+        function resetAndPollForUpdate() {
+            doResetRequest();
+            pollForUpdate();
+        }
+        async function doCheckForUpdate() {
+            const rawResponse = await fetch('https://u9m0v5iwsk.execute-api.us-west-2.amazonaws.com/default/classBuzzer', {
+                method: 'GET',
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json'
+                },
+            });
+            const content = await rawResponse.json();
+            //console.log(JSON.stringify(content));
+
+            // update the UI...
+            updateStudentList(content.response.Items[0].Students);
+        }
+        function updateStudentList(studentList) {
+            // Setup...
+            let str = "";
+            let timeFirst;
+
+            // First response only for users support...
+            let firstResponseOnly = document.getElementById('oneResetPerUser').checked;
+            let knownNames = new Set();
+            var regExpTeamName = /\(([^)]+)\)/;
+
+            // Loop through the students...
+            for (let i = 0; i < studentList.length; i++) {
+                let name = studentList[i].name;
+                let time = studentList[i].time;
+                
+                if (i == 0) {
+                    str = name;
+                    timeFirst = new Date(time);
+
+                    // First response only support...
+                    var teamNameMatches = regExpTeamName.exec(name);
+                    if (teamNameMatches == null) {
+                        teamNameMatches = ['', name];
+                    }
+                    if ((teamNameMatches != null) && (teamNameMatches.length >= 1)) {
+                        knownNames.add(teamNameMatches[1]);
+                    }
+                }
+                else {
+                    // First response only support...
+                    if (firstResponseOnly) {
+                        var teamNameMatches = regExpTeamName.exec(name);
+                        if (teamNameMatches == null) {
+                            teamNameMatches = ['', name];
+                        }
+                        if ((teamNameMatches != null) && (teamNameMatches.length >= 1)) {
+                            if (knownNames.has(teamNameMatches[1])) {
+                                continue;
+                            }
+                            knownNames.add(teamNameMatches[1]);
+                        }
+                    }
+
+                    // Add it...
+                    str += ",<br />";
+                    str += name;
+
+                    // Figure out relative time...
+                    let thisTime = new Date(time);
+                    let diffSeconds = (thisTime - timeFirst) / 1000.0;
+                    str += " (+" + ((Math.round(diffSeconds * 100) / 100).toFixed(2)) + "s)";
+                }
+            }
+
+            // And set it...
+            let uiResponse = document.getElementById('serverResponseId');
+            uiResponse.innerHTML = str;
+
+            // Set the response on the UI element...
+            //var uiResponse = document.getElementById('serverResponseId');
+            //uiResponse.innerHTML = JSON.stringify(content.response);
+        }
+    </script>
+
+    <div class="content">
+        <h1 style="font-size : 40px; width: 100%;">Teacher Buzzer</h1>
+        <form>
+            <label for="pollLength" style="font-size : 20px;">Poll for (seconds):</label>
+            <input type="text" id="pollForSecondsId" name="pollForSeconds" style="font-size : 20px;" value="300">
+            <input type="checkbox" id="oneResetPerUser" name="oneResetPerUser1" value="One Response Only" checked>
+            <label style="font-size : 20px;" id="oneResetPerUserLabel" for="oneResetPerUser1">One Response Only</label><br>
+            <br /><br />
+            <input id="resetButtonId" name="resetButton" type="button" value="Reset" onclick="doResetRequest()" style="font-size : 30px; width: 20%; height: 50px;" />
+            <input id="checkForUpdateId" name="checkForUpdate" type="button" value="Poll for Update" onclick="pollForUpdate()" style="font-size : 30px; width: 30%; height: 50px;" />
+            <input id="resetAndCheckForUpdateId" name="resetAndCheckForUpdate" type="button" value="Reset & Poll" onclick="resetAndPollForUpdate()" style="font-size : 30px; width: 30%; height: 50px;" />
+            <br /><br />
+            <label id="serverResponseId" style="font-size : 35px;color:blueviolet"></label>
+        </form>
+    </div>
+</body>
+
+</html>

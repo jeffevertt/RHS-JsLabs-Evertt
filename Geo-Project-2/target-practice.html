@@ -1,0 +1,672 @@
+<html>
+<head/>
+<body>
+  <div id="canvas" style="width:100%; height:60%"></div>
+  <div id="prompts" style="width:100%; height:40%; display: flex; flex-direction: row;">
+	<div style="width:50%; height:100%; float:left">
+		<label for="code"  style="height:20px" title="VARIABLES&#10;  target { x, y }&#10;  ball { x, y }&#10;  targetVelocity { x, y, a }&#10;  ballTravelTime&#10;  ballSpeed (used on level 11 only)&#10;&#10;FUNCTIONS&#10;  launch(angle, distance)&#10;  sqrt(x)&#10;  sin(x), cos(x), tan(x)&#10;  asin(x), acos(x), atan(x), atan2(y,x)&#10;  log(text)&#10;&#10;OTHER&#10;  ball has a constant travel time of 1.5 seconds (all levels except 11)">Code (hover for details):</label><br>
+		<textarea id="code" name="code" style="width:100%; height:calc(100% - 20px);" spellcheck="false"></textarea><br>
+	</div>
+	<div style="width:30%; height:100%">
+		<div style="width:100%; height 100%;">
+			<label for="log">Log:</label><br>
+			<textarea id="log" name="log" style="width:100%; height:calc(100% - 20px);" disabled></textarea><br>
+		</div>
+	</div>
+	<div style="width:20%; height:100%; float:right; padding:3px">
+		<label for="log" style="height:20px">Controls:</label><br>
+		<div style="display: flex; flex-direction: column; width:100%">
+			<button onclick="executeCode()" style="width:100%">Execute</button>
+			<div style="width:100%">
+				<input type="checkbox" id="resetBeforeExecute" name="resetBeforeExecute" checked=true>
+				<label for="resetBeforeExecute" style="width:100%">Reset on Execute</label>
+			</div>
+		</div>
+		<br/>
+		<div style="display: flex; flex-direction: column; width:100%">
+			<button id="levelPrevId" onclick="levelPrev()" style="width:100%; padding:3px">Prev Level</button>
+			<button id="levelNextId" onclick="levelNext()" style="width:100%; padding:3px">Next Level</button>
+		</div>
+		<br/>
+		<label for="log" style="height:20px">Test Control (NO CODE):</label>
+		<div style="display: flex; flex-direction: row">
+		  <label for="angle" style="width:35%">Angle:</label><br>
+		  <input type="text" id="angle" name="angle" style="width:65%"><br>
+		</div>
+		<div style="display: flex; flex-direction: row">
+		  <label for="distance" style="width:35%">Distance:</label><br>
+		  <input type="text" id="distance" name="distance" style="width:65%"><br>
+		</div>
+		<button id="simulateButton" onclick="launchButton()" style="width:100%">Launch</button><br/>
+		<button id="resetSimulation" onclick="resetButton()" style="width:100%">Reset</button><br/>
+		<br/>
+		<button id="zoomInButton" onclick="zoomButton(1)" style="width:100%">Zoom In</button><br/>
+		<button id="zoomOutButton" onclick="zoomButton(-1)" style="width:100%">Zoom Out</button><br/>
+	</div>
+  </div>
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.1/jquery.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/raphael/2.3.0/raphael.min.js"></script>
+<script src="vec2.js"></script>
+<script>
+    // Globals
+	var currentLevel = 1;
+	var w, h, draw, ox, oy, ballBaseRadius, ballShadowBaseRadius, ballStartLoc, targetStartLoc;
+	var field, wall, ballShadow, ballObj, targetObj, targetText, levelText, motionPath;
+	var targetVelocity = { x:0, y:0, a:0 };
+	var pixelsPerUnit = 20;
+	var targetTextOffsetY = 28;
+	var ballTravelTime = 1.5;
+	var ballSpeed = 0;
+	var arcMaxAngleValue = 9;
+	var state = 'startup';
+	var cancelShot = false;
+
+	// For code access...
+	var ball = new vec2(0, 0);
+	var target = new vec2(0, 0);
+	
+	// Called on resize, sets things up...
+    function setupApp() {
+	    let canvas = document.getElementById("canvas");
+	
+        w = canvas.offsetWidth;
+        h = canvas.getBoundingClientRect().height;
+		
+		// Save off previous target location...
+		let prevTrgLocX = 0;
+		let prevTrgLocY = 0;
+		if (state != 'startup') {
+			prevTrgLocX = toCoordFrameX(targetObj.attr('cx'));
+			prevTrgLocY = toCoordFrameY(targetObj.attr('cy'));
+		}
+			
+        if (state == 'startup') draw = Raphael("canvas", w, h);
+		draw.clear();
+		draw.setSize(w, h);
+
+        // Background...
+        field = draw.rect(0, 0, w, h);
+        field.attr({fill: 'lightgray'});
+		
+		// Clicking the background resets things, double click will pick new target location...
+		field.click(function() {
+			resetBallState();
+			resetTarget(true);
+			document.getElementById('log').value = '';
+		});
+		field.dblclick(function() {
+			resetBallState();
+			resetTarget();
+			document.getElementById('log').value = '';
+			pickRandomLocationForTargetAndBall();
+		});
+		
+		// Coorindate frame...
+		let cfTickWidth = 4;
+		let cfTickPixelsPerTick = pixelsPerUnit;
+		let xaxis = draw.path(["M", 0, h/2, "L", w, h/2]); 		// draw the x-axis
+		let yaxis = draw.path(["M", w/2, 0, "L", w/2, h]); 		// draw the y-axis
+		for (let i = 0; i <= w/2; i += cfTickPixelsPerTick) {   // draw the tick marks
+	        let majorTick = ((i % (5 * cfTickPixelsPerTick)) == 0) ? true : false;
+		    let cfTickWidthLcl = majorTick ? cfTickWidth * 2 : cfTickWidth;
+		    let p1 = draw.path(["M", w/2 + i, h/2 - cfTickWidthLcl/2, "L", w/2 + i, h/2 + cfTickWidthLcl/2]);
+		    let p2 = draw.path(["M", w/2 - i, h/2 - cfTickWidthLcl/2, "L", w/2 - i, h/2 + cfTickWidthLcl/2]);
+		    if (majorTick) p1.attr({ "stroke-width": 2 });
+		    if (majorTick) p2.attr({ "stroke-width": 2 });
+		}
+		for (let i = 0; i <= h/2; i += cfTickPixelsPerTick) {
+		    let majorTick = ((i % (5 * cfTickPixelsPerTick)) == 0) ? true : false;
+		    let cfTickWidthLcl = majorTick ? cfTickWidth * 2 : cfTickWidth;
+		    let p1 = draw.path(["M", w/2 - cfTickWidthLcl/2, h/2 + i, "L", w/2 + cfTickWidthLcl/2, h/2 + i]);
+		    let p2 = draw.path(["M", w/2 - cfTickWidthLcl/2, h/2 - i, "L", w/2 + cfTickWidthLcl/2, h/2 - i]);
+		    if (majorTick) p1.attr({ "stroke-width": 2 });
+		    if (majorTick) p2.attr({ "stroke-width": 2 });
+		}
+		
+		// Level text...
+		levelText = draw.text(2, 10, "level " + currentLevel + " (" + calcLevelDesc(currentLevel) + ")");
+		levelText.attr({
+			"text-anchor": "start",
+		    "font-size": 18,
+		    "font-family": "Arial, sans-serif",
+		    "font-weight": "bold",
+		    "fill": "#000077"
+		});
+		
+        // Ball, target, and shadow...
+        ox = w/2;
+        oy = h/2;
+        ballBaseRadius = 10;
+        ballShadowBaseRadius = ballBaseRadius * 1.2;
+		ballStartLoc = { x:ox, y:oy };
+		
+        ballShadow = draw.circle(ox, oy, ballShadowBaseRadius);
+        ballShadow.attr({stroke: 'gray', 'stroke-width': 0, fill: 'gray'});
+		
+        targetObj = draw.circle(toPixelsX(prevTrgLocX), toPixelsY(prevTrgLocY), 18);
+        targetObj.attr({stroke: 'black', 'stroke-width': 1, fill: 'red'});
+		targetText = draw.text(0, -targetTextOffsetY, "");
+		targetText.attr({
+		    "font-size": 16,
+		    "font-family": "Arial, sans-serif",
+		    "font-weight": "bold",
+		    "fill": "#ff0000"
+		});
+		targetStartLoc = { x: targetObj.attr('cx'), y: targetObj.attr('cy') }
+		targetText.attr({x: targetObj.attr('cx'), y: targetObj.attr('cy') - targetTextOffsetY});
+		updateTargetText();
+		
+        ballObj = draw.circle(ox, oy, 10);
+        ballObj.attr({stroke: 'black', 'stroke-width': 2, fill: 'blue'});
+		
+		resetBallState();
+    }
+	
+	function drawArc(xCenter, yCenter, value, angle0, R) {
+		let angle = (angle0 + arcMaxAngleValue * value);
+		let x0 = xCenter + R * Math.cos(angle0 * Math.PI / 180);
+		let y0 = yCenter - R * Math.sin(angle0 * Math.PI / 180);
+		let x = xCenter + R * Math.cos(angle * Math.PI / 180);
+		let y = yCenter - R * Math.sin(angle * Math.PI / 180);
+		return {
+			path: [
+				["M", x0, y0],
+				["A", R, R, 0, 0, 0, x, y]
+			]
+		};
+	}
+
+    function touchRect(r, ball) {
+        if (ball.attr('cx') + ball.attr('r') < r.attr('x') ||
+            ball.attr('cy') + ball.attr('r') < r.attr('y') ||
+            ball.attr('cx') - ball.attr('r') > r.attr('x') + r.attr('width') ||
+            ball.attr('cy') - ball.attr('r') > r.attr('y') + r.attr('height')) {
+            return false;
+        }
+        return true;
+    }
+    function inRect(r, ball) {
+        if (ball.attr('cx') < r.attr('x') ||
+            ball.attr('cy') < r.attr('y') ||
+            ball.attr('cx') > r.attr('x') + r.attr('width') ||
+            ball.attr('cy') > r.attr('y') + r.attr('height')) {
+            return false;
+        }
+        return true;
+    }
+    function inCircle(circle, ball) {
+		let dx = ball.attr('cx') - circle.attr('cx');
+		let dy = ball.attr('cy') - circle.attr('cy');
+		let dst = Math.sqrt(dx * dx + dy * dy);
+        if (dst < 10) {
+            return true;
+        }
+        return false;
+    }
+
+	function toDegrees(angle) {
+		return angle * (180 / Math.PI);
+	}
+	
+	function toRadians(angle) {
+		return angle * (Math.PI / 180);
+	}
+	
+	function toCoordFrameX(pos) {
+		pos = (pos-ox)/pixelsPerUnit;
+		return pos;
+	}
+	function toCoordFrameY(pos) {
+		pos = -(pos-oy)/pixelsPerUnit;
+		return pos;
+	}
+	function toCoordFrame(pos) {
+		pos.x = (pos.x-ox)/pixelsPerUnit;
+		pos.y = -(pos.y-oy)/pixelsPerUnit;
+		return pos;
+	}
+	function toPixelsX(pos) {
+		pos = pos * pixelsPerUnit + ox;
+		return pos;
+	}
+	function toPixelsY(pos) {
+		pos = -pos * pixelsPerUnit + oy;
+		return pos;
+	}
+	function toPixels(pos) {
+		pos.x = pos.x * pixelsPerUnit + ox;
+		pos.y = -pos.y * pixelsPerUnit + oy;
+		return pos;
+	}
+	
+	function maxCoordinateX() {
+		return toCoordFrameX(canvas.offsetWidth);
+	}
+	function minCoordinateX() {
+		return toCoordFrameX(0);
+	}
+	function maxCoordinateY() {
+		return toCoordFrameY(0);
+	}
+	function minCoordinateY() {
+		return toCoordFrameY(canvas.offsetHeight);
+	}
+	
+	function randRange(min, max) {
+		return min + Math.random() * (max - min);
+	}
+	
+	function calcLevelDesc(level) {
+		switch (level) {
+			case 1  : return "on x-axis";
+			case 2  : return "on y-axis";
+			case 3  : return "target in quadrant 1";
+			case 4  : return "target in all quadrants";
+			case 5  : return "ball off origin";
+			case 6  : return "target linear velocity";
+			case 7  : return "target linear velocity, ball off origin";
+			case 8  : return "target circular motion, start on x-axis";
+			case 9  : return "target circular motion, ball off origin";
+			case 10 : return "target circular motion around ball start";
+			case 11 : return "ball & target linear velocity";
+		}
+	}
+	
+	function calcStartingLocationForTarget() {
+		// Figure out positions...
+		let trgPosX = toPixelsX(randRange(minCoordinateX() + 5, maxCoordinateX() - 5));
+		let trgPosY = toPixelsY(randRange(minCoordinateY() + 5, maxCoordinateY() - 5));
+		
+		// Level customization...
+		if ((currentLevel == 1) || (currentLevel == 8)) { 	// Keep it on the pos x-axis
+			trgPosX = toPixelsX(Math.abs(toCoordFrameX(trgPosX)));
+			trgPosY = oy;
+		}
+		else if (currentLevel == 2) { 						// Keep it on the pos y-axis
+			trgPosX = ox;
+			trgPosY = toPixelsY(Math.abs(toCoordFrameY(trgPosY)));
+		}
+		else if (currentLevel == 3) {						// Keep it in Q1
+			trgPosX = toPixelsX(Math.abs(toCoordFrameX(trgPosX)));
+			trgPosY = toPixelsY(Math.abs(toCoordFrameY(trgPosY)));
+		}
+		
+		// Target motion...
+		targetVelocity = { x:0, y:0, a:0 };
+		if (motionPath != null) {
+			motionPath.remove();
+		}
+		if ((currentLevel == 6) || (currentLevel == 7) || (currentLevel == 11)) {
+			// Linear speed...
+			targetVelocity.x = randRange(2, 10) * ((trgPosX < ox) ? 1 : -1);
+			targetVelocity.y = randRange(2, 10) * ((trgPosY < oy) ? -1 : 1);
+			let trgDirLenFactor = 1;
+			let ballTravelTimeLcl = (currentLevel == 11) ? 0.6 : ballTravelTime;
+			let trgEnd = { x:trgPosX + targetVelocity.x * ballTravelTimeLcl * pixelsPerUnit * trgDirLenFactor, y:trgPosY - targetVelocity.y * ballTravelTimeLcl * pixelsPerUnit * trgDirLenFactor };
+			
+			// Draw the line...
+			let pathAttr = {
+				"arrow-end":"classic-wide-long",
+				"stroke": "#E00",
+				"stroke-width": 3
+			};
+			let pathAttr1 = {
+				"arrow-end":"classic-wide-long",
+				"stroke": "#000",
+				"stroke-width": 3
+			};
+			let motionPath0 = "M "+trgPosX+" "+trgPosY+" L"+trgPosX+" "+trgPosY;
+			let motionPath1 = "M "+trgPosX+" "+trgPosY+" L"+trgEnd.x+" "+trgEnd.y;
+			motionPath = draw.path(motionPath0).attr(pathAttr);
+			motionPath.toBack(); field.toBack();
+			motionPath.animate({ path: motionPath1 }, 2000, "<>");
+		}
+		if ((currentLevel == 8) || (currentLevel == 9) || (currentLevel == 10)) {
+			// Rotational speed...
+			targetVelocity.a = randRange(30, 100);
+			arcMaxAngleValue = Math.max(5, targetVelocity.a / 10);
+		
+			// Draw the arc...
+			let rotCenter = (currentLevel == 10) ? ballStartLoc : { x: ox, y: oy };
+			let arcRadius = Math.sqrt((trgPosX-rotCenter.x) * (trgPosX-rotCenter.x) + (trgPosY-rotCenter.y) * (trgPosY-rotCenter.y));
+			let angle0 = -Math.atan2(trgPosY-rotCenter.y, trgPosX-rotCenter.x) * 180 / Math.PI;
+			draw.customAttributes.arc = drawArc;
+			motionPath = draw.path().attr({
+				"arrow-end":"classic-wide-long",
+				"stroke": "#E00",
+				"stroke-width": 3,
+				arc: [rotCenter.x, rotCenter.y, 0, angle0, arcRadius]
+			});
+			motionPath.animate({ arc: [rotCenter.x, rotCenter.y, arcMaxAngleValue, angle0, arcRadius] }, 2000, "bounce");
+			motionPath.toBack(); field.toBack();
+		}
+		
+		return { x: trgPosX, y:trgPosY };
+	}
+	
+	function calcStartingLocationForBall() {
+		ballSpeed = (currentLevel == 11) ? randRange(10, 20) : 0;
+		if ((currentLevel == 5) || (currentLevel == 7) || (currentLevel == 9) || (currentLevel == 10) || (currentLevel == 11)) {
+			let spawnRect = { x:50, width:w-100, y:50, height:h-100 };
+			if (currentLevel == 10) {
+				spawnRect = { x:w*0.2, width:w*0.6, y:h*0.2, height:h*0.6 };
+			}
+			return { x: (w - spawnRect.x - Math.random() * spawnRect.width), y:(h - spawnRect.y - Math.random() * spawnRect.height) };
+		}
+		return { x:ox , y:oy };
+	}
+	
+    function pickRandomLocationForTargetAndBall() {
+		// Figure out positions (try a few times, make sure ball/target aren't too close)...
+		ballStartLoc = calcStartingLocationForBall();
+		let trgPos = calcStartingLocationForTarget();
+		for (let i = 0; i < 20; i++) {
+			// Check it...
+			let dstFromBall = Math.sqrt((trgPos.x - ballStartLoc.x) * (trgPos.x - ballStartLoc.x) + (trgPos.y - ballStartLoc.y) * (trgPos.y - ballStartLoc.y));
+			let dstFromOrigin = Math.sqrt((trgPos.x - ox) * (trgPos.x - ox) + (trgPos.y - oy) * (trgPos.y - oy));
+			if ((dstFromBall > (pixelsPerUnit * 2)) &&
+			    ((((currentLevel != 8) && (currentLevel != 9)) || (dstFromOrigin < (pixelsPerUnit * 15)))) &&
+				(((currentLevel != 10) || (dstFromBall < (pixelsPerUnit * 15)))))
+			{
+				break;
+			}
+			
+			// Target position...
+			trgPos = calcStartingLocationForTarget();
+		}
+		
+		// Update ball position...
+		ballShadow.attr({cx: ballStartLoc.x, cy: ballStartLoc.y});
+		ballObj.attr({cx: ballStartLoc.x, cy: ballStartLoc.y});
+		ball = new vec2(toCoordFrameX(ballShadow.attr('cx')), toCoordFrameY(ballShadow.attr('cy')));
+		
+		// Update target position...
+        targetObj.attr({cx: trgPos.x, cy: trgPos.y});
+		target = new vec2(toCoordFrameX(targetObj.attr('cx')), toCoordFrameY(targetObj.attr('cy')));
+		targetText.attr({x: trgPos.x, y: trgPos.y - targetTextOffsetY});
+		targetStartLoc = { x: targetObj.attr('cx'), y: targetObj.attr('cy') }
+		updateTargetText();
+    }
+	
+	function updateTargetText() {
+		targetText.attr({text:"(" + Math.round((targetObj.attr('cx')-ox)/pixelsPerUnit*10)/10 + "," + Math.round(-(targetObj.attr('cy')-oy)/pixelsPerUnit*10)/10 + ")"});
+	}
+	
+	function resetBallState() {
+		ballShadow.attr({cx: ballStartLoc.x, cy: ballStartLoc.y});
+		ballShadow.attr({r: ballShadowBaseRadius});
+		ballObj.attr({cx: ballStartLoc.x, cy: ballStartLoc.y});
+		ball = new vec2(toCoordFrameX(ballShadow.attr('cx')), toCoordFrameY(ballShadow.attr('cy')));
+		ballObj.attr({r: ballBaseRadius});
+		
+		targetObj.attr({cx: targetStartLoc.x, cy: targetStartLoc.y});
+		target = new vec2(toCoordFrameX(targetObj.attr('cx')), toCoordFrameY(targetObj.attr('cy')));
+		targetText.attr({x: targetStartLoc.x, y: targetStartLoc.y - targetTextOffsetY});
+		
+		state = 'ready';
+		cancelShot = true;
+	}
+	
+	function resetTarget(partial = false) {
+		if (!partial) {
+			pickRandomLocationForTargetAndBall();
+		}
+		targetObj.attr({cx: targetStartLoc.x, cy: targetStartLoc.y});
+		target = new vec2(toCoordFrameX(targetObj.attr('cx')), toCoordFrameY(targetObj.attr('cy')));
+		targetText.attr({x: targetStartLoc.x, y: targetStartLoc.y - targetTextOffsetY});
+		targetObj.attr('fill', 'red');
+		targetText.attr({fill: "#ff0000"});
+		updateTargetText();
+	}
+	
+	function levelNext() {
+	    currentLevel = (currentLevel == 11) ? currentLevel : (currentLevel + 1);
+		levelUpdate();
+	}
+
+	function levelPrev() {
+	    currentLevel = (currentLevel == 1) ? 1 : (currentLevel - 1);
+		levelUpdate();
+	}
+	
+	function levelUpdate() {
+		levelText.attr({
+			"text":"level " + currentLevel + " (" + calcLevelDesc(currentLevel) + ")"
+		});
+		resetTarget();
+		resetBallState();
+	}
+	
+	function zoomButton(change) {
+		let zoomLevels = [ 10, 13, 17, 20, 22, 25, 30 ];
+		let currentLevel = 3;
+		for (let i = 0; i < zoomLevels.length; ++i) {
+			if (pixelsPerUnit == zoomLevels[i]) {
+				currentLevel = i;
+				break;
+			}
+		}
+		currentLevel = Math.min(Math.max(currentLevel + change, 0), zoomLevels.length - 1);
+		if (zoomLevels[currentLevel] != pixelsPerUnit) {
+			pixelsPerUnit = zoomLevels[currentLevel];
+			setupApp();
+			pickRandomLocationForTargetAndBall();
+		}
+		document.getElementById('zoomOutButton').disabled = (currentLevel == 0);
+		document.getElementById('zoomInButton').disabled = (currentLevel == zoomLevels.length - 1);
+	}
+	
+	function isReadyToLaunch() {
+		return (state == 'ready') || (state == 'landed');
+	}
+	
+	function launchButton() {
+		let angleDegrees = document.getElementById('angle').value;
+		let distance = document.getElementById('distance').value;
+		if (!isReadyToLaunch()) {
+			log("(ignored: in progress)");
+			return;
+		}
+		launch(angleDegrees, distance);
+	}
+	
+	function resetButton() {
+		resetBallState();
+		resetTarget();
+		document.getElementById('log').value = '';
+		pickRandomLocationForTargetAndBall();
+	}
+	
+	function shouldResetBeforeExecute() {
+		return document.getElementById("resetBeforeExecute").checked;
+	}
+	
+	function executeCode() {
+		if (!isReadyToLaunch()) {
+			log("(ignored: in progress)" + state);
+			return;
+		}
+		
+		if (shouldResetBeforeExecute()) {
+			resetButton();
+		} else {
+			resetBallState();
+		}
+		
+		document.getElementById('log').value = '';
+		let code = cleanCode(document.getElementById('code').value);
+		try {
+			eval(code);
+		} catch (error) {
+		    document.getElementById('log').value += error + "\n";
+		}
+	}
+
+	// Deal with resizing...
+    window.addEventListener('resize', setupApp);
+
+	// First time setup...
+	setupApp();
+	pickRandomLocationForTargetAndBall();
+
+	// Launch ball...
+    function launch(angleDegrees, distance) {
+        if (state != 'ready') {
+			resetBallState();
+		}
+		
+		// Log it...
+		log('launch(' + angleDegrees + ", " + distance + ')');
+		
+		// Kick it off...
+		state = 'flying';
+		cancelShot = false;
+
+		// Shot params...
+		var shotStartX = ballShadow.attr('cx');
+		var shotStartY = ballShadow.attr('cy');
+		var shotEndX = shotStartX + Math.cos(toRadians(-angleDegrees)) * distance * pixelsPerUnit;
+		var shotEndY = shotStartY + Math.sin(toRadians(-angleDegrees)) * distance * pixelsPerUnit;
+
+		// Precompute shot params...
+		var shotDirX = (shotEndX - shotStartX);
+		var shotDirY = (shotEndY - shotStartY);
+		var shotEndToStartLen = Math.sqrt(Math.pow(shotDirX,2) + Math.pow(shotDirY,2));
+		var shotDirUnitX = (shotEndX - shotStartX) / shotEndToStartLen;
+		var shotDirUnitY = (shotEndY - shotStartY) / shotEndToStartLen;
+		var shotShadowDirX = 0.0 / Math.sqrt(1);
+		var shotShadowDirY = -1.0 / Math.sqrt(1);
+		var shotT = 0.0;
+		var shotStartTime = Date.now();
+		
+		// Target params...
+		var targetStart = { 
+			x:toCoordFrameX(targetObj.attr('cx')), 
+			y:toCoordFrameY(targetObj.attr('cy')),
+			a:0
+		};
+		var targetRotOrigin = (currentLevel == 10) ? { x: toCoordFrameX(shotStartX), y: toCoordFrameY(shotStartY) } : { x: 0, y: 0 };
+		targetStart.a = Math.atan2(targetStart.y - targetRotOrigin.y, targetStart.x - targetRotOrigin.x) * 180 / Math.PI;
+		var targetRotRadius = Math.sqrt((targetStart.x - targetRotOrigin.x) * (targetStart.x - targetRotOrigin.x) + (targetStart.y - targetRotOrigin.y) * (targetStart.y - targetRotOrigin.y));
+			
+		// Special case level 11...
+		var ballTravelTimeLcl = (currentLevel == 11) ? (shotEndToStartLen / pixelsPerUnit / ballSpeed) : ballTravelTime;
+
+		// Compute the motion...
+		var targetMotionOffset = { 
+			x:targetVelocity.x * ballTravelTimeLcl, 
+			y:targetVelocity.y * ballTravelTimeLcl, 
+			a:targetVelocity.a * ballTravelTimeLcl };
+
+		// Simulation function...
+		var advance = function() {
+			// Check for cancelled...
+			if (cancelShot) {
+				return;
+			}
+			
+			// Step the shot...
+			shotT = (Date.now() - shotStartTime) / ballTravelTimeLcl / 1000;
+			shotT = Math.min(shotT, 1.0);
+			let shotTe = 1 - (Math.cos(Math.PI * shotT)+1)/2;
+
+			// Setup...
+			let ballHeightT = Math.pow(1.0 - 2.0 * Math.abs(0.5 - shotTe), 0.35);
+			let ballHeight = shotEndToStartLen * 0.115 * ballHeightT;
+			if (currentLevel == 11) {
+				shotTe = shotT;
+				ballHeightT = 0;
+				ballHeight = 0;
+			}
+
+			// Update ball & shadow positions...
+			let ballShadowPosX = shotStartX + shotDirX * shotTe;
+			let ballShadowPosY = shotStartY + shotDirY * shotTe;
+			let ballPosX = ballShadowPosX + shotShadowDirX * ballHeight;
+			let ballPosY = ballShadowPosY + shotShadowDirY * ballHeight;
+			ballShadow.attr({cx: ballShadowPosX, cy: ballShadowPosY});
+			ballObj.attr({cx: ballPosX, cy: ballPosY});
+			ball = new vec2(toCoordFrameX(ballShadow.attr('cx')), toCoordFrameY(ballShadow.attr('cy')));
+
+			// Ball/Shadow size...
+			let ballSize = ballBaseRadius * (1 + ballHeightT * 1.25);
+			let ballShadowSize = ballShadowBaseRadius * (1 - ballHeightT * 0.15);
+			ballObj.attr({r: ballSize});
+			ballShadow.attr({r: ballShadowSize});
+			
+			// Update target...
+			let targetAngle = targetStart.a + targetMotionOffset.a * shotT;
+			let targetPos = {
+				x:targetRotRadius * Math.cos(targetAngle * Math.PI / 180) + targetRotOrigin.x,
+				y:targetRotRadius * Math.sin(targetAngle * Math.PI / 180) + targetRotOrigin.y };
+			targetPos.x += targetMotionOffset.x * shotT;
+			targetPos.y += targetMotionOffset.y * shotT;
+			targetPos = toPixels(targetPos);
+			targetObj.attr({cx: targetPos.x, cy: targetPos.y});
+			target = new vec2(toCoordFrameX(targetObj.attr('cx')), toCoordFrameY(targetObj.attr('cy')));
+			targetText.attr({x: targetPos.x, y: targetPos.y - targetTextOffsetY});
+			updateTargetText();
+		
+			// Collision checks...
+			if ((shotT == 1.0) && inCircle(targetObj, ballObj)) {
+				targetObj.attr('fill', "green");
+				targetText.attr({text:"Well done!", fill: "#00AA00"});
+				state = 'landed';
+			} else {
+				 // Check for done...
+				 if (shotT >= 1.0) {
+					 state = 'landed';
+			 }
+				 else {
+					 setTimeout(advance, 5);
+				 }
+			}
+		}
+
+		// Kick it off...
+		advance();
+    }
+	
+	// Helper fns...
+	function sqrt(x) {
+		return Math.sqrt(x);
+	}
+	
+	function sin(x) {
+		return Math.sin(toRadians(x));
+	}
+	function cos(x) {
+		return Math.cos(toRadians(x));
+	}
+	function tan(x) {
+		return Math.tan(toRadians(x));
+	}
+	function asin(x) {
+		return toDegrees(Math.asin(x));
+	}
+	function acos(x) {
+		return toDegrees(Math.acos(x));
+	}
+	function atan(x) {
+		return toDegrees(Math.atan(x));
+	}
+	function atan2(y, x) {
+		let angle = toDegrees(Math.atan2(y, x));
+		angle = (angle < -90) ? angle + 360 : angle;
+		return angle;
+	}
+	
+	function abs(x) {
+		return Math.abs(x);
+	}
+	
+	function log(value) {
+		document.getElementById('log').value += value + "\n";
+	}
+	
+	function cleanCode(code) {
+		return code.replaceAll('–','-').replaceAll('.x​','.x').replaceAll('.y​','.y').replaceAll('​',''); // That last one is some kind of end of line character word sometimes puts in (?)
+	}
+</script>
+</body>
+</html>
