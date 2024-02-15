@@ -154,14 +154,14 @@
 	
 	// Button functions...
 	function simulateButton() {
-		if (document.getElementById('simulateButton').textContent == "Simulate") {
+		if (document.getElementById('simulateButton').textContent == "Run Code") {
 			simulate();
 		} else {
 			resetSimulation(false);
 		}
 	}
 	function isSimulationRunning() {
-		return (document.getElementById('simulateButton').textContent != "Simulate");
+		return (document.getElementById('simulateButton').textContent != "Run Code");
 	}
 	function resetButton() {
 		// Simulation...
@@ -172,6 +172,27 @@
 		viewPan = vec2.zero();
 		setupApp();
 	}
+	
+    // User code...
+    var userCodeFn = null;
+    function enableUserCode(userCode) {
+        // Save it off...
+        userCodeFn = userCode;
+
+        // Disable the UI...
+        document.getElementById('prompts').style = "display:none";
+        document.getElementById('canvas').style = "width:100%; height:100%";
+
+        // Re-setup everything...
+        setupApp();
+        resetSimulation();
+
+        // Kick off the simulation...
+        simulateButton();
+    }
+    function isUserCodeEnabled() {
+        return (userCodeFn != null);
+    }
 	
 	// Grid...
 	function setupGrid() {
@@ -269,9 +290,19 @@
 	
 	// Simulation...
 	function setupSimulation() {
+		// Nothing we need to do here...
+		return true;
+	}
+	function execSimulation() {
 		// User code...
-		if (!executeCode()) {
-			return false;
+		if (userCodeFn != null) {
+			// Run the code specified by userCode.js...
+			userCodeFn();
+		} else {
+			// Run the code in the UI element...
+			if (!executeCode(code)) {
+				return false;
+			}
 		}
 		
 		return true;
@@ -291,7 +322,7 @@
 
 		// Cancel us out of the simulation (if it's currently running)...
 		cancelSimulation = true;
-		document.getElementById('simulateButton').textContent = "Simulate";
+		document.getElementById('simulateButton').textContent = "Run Code";
 		field.attr({stroke: 'black'});
 		
 		// Clear the log...
@@ -332,7 +363,7 @@
 			
 			// User code...
 			sim.resetUserGfx();
-			if (!executeCode()) {
+			if (!execSimulation()) {
 				return false;
 			}
 			
@@ -370,5 +401,6 @@
 	// First time setup...
 	setupApp();
 </script>
+<script src="userCode.js"></script>
 </body>
 </html>

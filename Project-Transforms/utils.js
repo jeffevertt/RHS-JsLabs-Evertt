@@ -111,8 +111,12 @@ function HSVToRGBHex(h, s, v) { // h, s, and v are [0, 1]. however, v super satu
 
 // Override the log function...
 function log(str) {
-	if (document.getElementById('log') != null) {
-		document.getElementById('log').value += str + "\n";
+	if (!isUserCodeEnabled()) {
+		if (document.getElementById('log') != null) {
+			document.getElementById('log').value += str + "\n";
+		}
+	} else {
+		console.log(str);
 	}
 }
 
