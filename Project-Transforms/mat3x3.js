@@ -148,26 +148,26 @@ class mat3x3 {
 		return "(" + m.m00 + " " + m.m01 + " " + m.m02 + ") (" + + m.m10 + " " + m.m11 + " " + m.m12 + ") (" + m.m20 + " " + m.m21 + " " + m.m22 + ")";
 	}
 
-	// Static functions...
-	static add(v1, v2) {
-		let ret = mat3x3.copy(m1);
-		return ret.add(v2);
-	}
-	static subtract(v1, v2) {
-		let ret = mat3x3.copy(m1);
-		return ret.subtract(v2);
-	}
-	static multiply(m1, m2) {
-		let ret = mat3x3.copy(m1);
-		return ret.multiply(m2);
-	}
-	static scale(m1, m2) {
-		let ret = mat3x3.copy(m1);
-		return ret.scale(m2);
-	}
-	static det(m) {
-		return m.det();
-	}
+    // Static functions...
+    static add(m1, m2) {
+        let ret = mat3x3.copy(m1);
+        return ret.add(m2);
+    }
+    static subtract(m1, m2) {
+        let ret = mat3x3.copy(m1);
+        return ret.subtract(m2);
+    }
+    static multiply(m1, m2) {
+        let ret = mat3x3.copy(m1);
+        return ret.multiply(m2);
+    }
+    static scale(m1, m2) {
+        let ret = mat3x3.copy(m1);
+        return ret.scale(m2);
+    }
+    static det(m) {
+        return m.det();
+    }
 	
 	static copy(other) {
 		return new mat3x3(other.m00, other.m01, other.m02, other.m10, other.m11, other.m12, other.m20, other.m21, other.m22);

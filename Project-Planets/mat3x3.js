@@ -149,22 +149,22 @@ class mat3x3 {
 	}
 
 	// Static functions...
-	static add(v1, v2) {
-		let ret = mat3x3.copy(m1);
-		return ret.add(v2);
-	}
-	static subtract(v1, v2) {
-		let ret = mat3x3.copy(m1);
-		return ret.subtract(v2);
-	}
-	static multiply(m1, m2) {
-		let ret = mat3x3.copy(m1);
-		return ret.multiply(m2);
-	}
-	static scale(m1, m2) {
-		let ret = mat3x3.copy(m1);
-		return ret.scale(m2);
-	}
+    static add(m1, m2) {
+        let ret = mat3x3.copy(m1);
+        return ret.add(m2);
+    }
+    static subtract(m1, m2) {
+        let ret = mat3x3.copy(m1);
+        return ret.subtract(m2);
+    }
+    static multiply(m1, m2) {
+        let ret = mat3x3.copy(m1);
+        return ret.multiply(m2);
+    }
+    static scale(m1, m2) {
+        let ret = mat3x3.copy(m1);
+        return ret.scale(m2);
+    }
 	static det(m) {
 		return m.det();
 	}
