@@ -242,13 +242,13 @@ class mat4x4 {
 	}
 
 	// Static functions...
-	static add(v1, v2) {
+	static add(m1, m2) {
 		let ret = mat4x4.copy(m1);
-		return ret.add(v2);
+		return ret.add(m2);
 	}
-	static subtract(v1, v2) {
+	static subtract(m1, m2) {
 		let ret = mat4x4.copy(m1);
-		return ret.subtract(v2);
+		return ret.subtract(m2);
 	}
 	static multiply(m1, m2) {
 		let ret = mat4x4.copy(m1);
