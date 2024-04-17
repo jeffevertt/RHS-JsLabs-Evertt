@@ -210,10 +210,10 @@ class mat4x4 {
 	// TODO
 	//inverse() {
 	//	let det = this.det();
-	//	let inv = new mat4x4(
-	//		(this.m11 * this.m22 - this.m21 * this.m12), (this.m02 * this.m21 - this.m22 * this.m01), (this.m01 * this.m12 - this.m11 * this.m02),
-	//		(this.m12 * this.m20 - this.m22 * this.m10), (this.m00 * this.m22 - this.m20 * this.m02), (this.m02 * this.m10 - this.m12 * this.m00),
-	//		(this.m10 * this.m21 - this.m20 * this.m11), (this.m01 * this.m20 - this.m21 * this.m00), (this.m00 * this.m11 - this.m10 * this.m01));
+	//	this.set((this.m11 * this.m22 - this.m21 * this.m12), (this.m02 * this.m21 - this.m22 * this.m01), (this.m01 * this.m12 - this.m11 * this.m02),
+	//		     (this.m12 * this.m20 - this.m22 * this.m10), (this.m00 * this.m22 - this.m20 * this.m02), (this.m02 * this.m10 - this.m12 * this.m00),
+	//		     (this.m10 * this.m21 - this.m20 * this.m11), (this.m01 * this.m20 - this.m21 * this.m00), (this.m00 * this.m11 - this.m10 * this.m01));
+    //  return this;
 	//}
 	
 	toMat4x4() {
