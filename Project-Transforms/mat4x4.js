@@ -196,7 +196,7 @@ class mat4x4 {
 		let m3x3b = new mat3x3(this.m10, this.m12, this.m13,  this.m20, this.m22, this.m23,  this.m30, this.m32, this.m33);
 		let m3x3c = new mat3x3(this.m10, this.m11, this.m13,  this.m20, this.m21, this.m23,  this.m30, this.m31, this.m33);
 		let m3x3d = new mat3x3(this.m10, this.m11, this.m12,  this.m20, this.m21, this.m22,  this.m30, this.m31, this.m32);
-		return this.m00 * m3x3a.det() - this.m01 * m3x3b.det() + this.m02 * m3x3c.det() - this.m03 * m3x3b.det();
+		return this.m00 * m3x3a.det() - this.m01 * m3x3b.det() + this.m02 * m3x3c.det() - this.m03 * m3x3d.det();
     }
 
     transpose() {
@@ -310,7 +310,7 @@ function m4x4RotZ(angle) { // Angle is in degrees
 	return (new mat4x4()).set( m3x3RotZ(angle) );
 }
 function m4x4RotAxis(axis, angle) { // Rotation about specified axis, angle is in degrees
-	return (new mat4x4()).set( m4x4RotAxis(angle) );
+	return (new mat4x4()).set( m4x4RotAxis(axis, angle) );
 }
 function m4x4Trans(offset) { // Angle is in degrees
 	return new mat4x4(1, 0, 0, offset.x, 0, 1, 0, offset.y, 0, 0, 1, offset.z, 0, 0, 0, 1);

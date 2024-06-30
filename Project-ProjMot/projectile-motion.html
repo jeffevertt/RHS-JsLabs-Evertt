@@ -253,11 +253,12 @@
 		case 3 : return "Ball moves in an arc, effected by gravity";
 		case 4 : return "Ball moves in an arc with gravity (hit wall, no bounce)";
 		case 5 : return "Ball moves in an arc with gravity (hit wall, with bounce)";
+        case 6 : return "*CHALLENGE* Ball moves in an arc with gravity (hit wall, bounce)";
 		}
 		return "<undefined>";
 	}
 	function levelNext() {
-	    currentLevel = (currentLevel == 5) ? currentLevel : (currentLevel + 1);
+	    currentLevel = (currentLevel == 6) ? currentLevel : (currentLevel + 1);
 		resetSimulation();
 	}
 	function levelPrev() {
@@ -335,6 +336,17 @@
 				direction: new vec2(0, 1),
 				normal: new vec2(-1, 0) };
 			break;
+		case 6 : 
+			ball = new vec2(minCoordinateX() + padding, randRange(minCoordinateY() + padding, minCoordinateY()/2));
+			gravity = new vec2(0, -9.8);
+			target = new vec2(randRange(maxCoordinateX()/2, maxCoordinateX() - padding), randRange(minCoordinateY() + padding, minCoordinateY()/2));
+			ballVelocity = calcVelocityForBallEndingAtTarget();
+			showWall = true;
+			wall = {
+				point: new vec2(randRange(3,10), 0),
+				direction: (new vec2(1, 1)).unit(),
+				normal: (new vec2(-1, 1)).unit() };
+			break;
 		default :
 			ball = new vec2(0, 0);
 			target = new vec2(0, 0);
@@ -408,7 +420,7 @@
 		
 		// UI updates...
 		document.getElementById("levelPrevId").disabled = (currentLevel <= 1) ? true : false;
-		document.getElementById("levelNextId").disabled = (currentLevel >= 5) ? true : false;		
+		document.getElementById("levelNextId").disabled = (currentLevel >= 6) ? true : false;		
 		
 		// Clear the log...
 		if (fullReset) {
