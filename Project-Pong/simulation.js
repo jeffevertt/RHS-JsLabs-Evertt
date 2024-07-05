@@ -231,7 +231,6 @@ class SimulationManager {
         }
         return true;
     }
-    
    
     cullNotInField(field) {
         let i = 0;
@@ -252,4 +251,9 @@ class SimulationManager {
         }
         return true;
     }
+}
+
+// Global functions
+function createBall(pos, vel) {
+    return simMan.createBall(pos.x, pos.y, vel.x, vel.y, ballRadius);
 }

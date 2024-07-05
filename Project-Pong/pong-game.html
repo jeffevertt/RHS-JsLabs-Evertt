@@ -41,6 +41,7 @@
     var pixelsPerUnit = 20;
     var fieldStrokeWidth = 3;
     var fieldHalfHeight = 9;
+    var ballRadius = 0.25;
     var cancelSimulation = false;
     var ball, paddle, wall; // Code accessed objects (need them to be globals)...
     
@@ -128,14 +129,14 @@
 
         // Paddles...
         let paddleSize = new vec2(screenHalfWidth * 0.0125, screenHalfHeight * 0.25);
-        let paddleOffsetSides = 1.5;
+        let paddleOffsetSides = 1.0;
         simMan.createPaddle(screenHalfWidth - paddleOffsetSides, 0, paddleSize.y, paddleSize.x, vec2.left());
         simMan.createPaddle(paddleOffsetSides - screenHalfWidth, 0, paddleSize.y, paddleSize.x, vec2.right());
 
         // Ball(s)...
-        let ballPos = new vec2(screenHalfWidth * 0.9, 0);
+        let ballPos = new vec2(screenHalfWidth - paddleSize.x - paddleOffsetSides - ballRadius * 1.1, 0);
         let initialBallVelocity = rotate(new vec2(-20, 0), 40);
-        simMan.createBall( ballPos.x, ballPos.y, initialBallVelocity.x, initialBallVelocity.y, 0.25 );
+        simMan.createBall( ballPos.x, ballPos.y, initialBallVelocity.x, initialBallVelocity.y, ballRadius );
     }
     
     // Button functions (launch, execCode)...

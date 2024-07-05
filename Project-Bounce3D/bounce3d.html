@@ -1,0 +1,392 @@
+<html>
+<head/>
+<body>
+  <div id="canvas" style="width:100%; height:70%"></div>
+  <div id="prompts" style="width:100%; height:30%; display: flex; flex-direction: row;">
+    <div id="divBallWall" style="width:60%; height:100%; float:left">
+        <label for="codeBallWall" title="VARIABLES&#10;  ball {&#10;    position { x, y },&#10;    velocity { x, y },&#10;    radius&#10;  }&#10; wall {&#10;    point { x, y },&#10;    direction { x, y },&#10;    normal { x, y },&#10;    angle&#10; }&#10;&#10;VECTORS&#10;  Define: v2(1,0)&#10;  Ops:    add(v,u), subtract(v,u), multiply(v,2)&#10;  Ops:   dot(v,u), unit(v), length(v), distance(v,u)&#10;  Ops:    rotate(v, angle)&#10;  Other:  vec2.right(),vec2.left(), vec2.up(), vec2.right()&#10;&#10;PADDLE CONTROL&#10;  The paddles are controlled by the user(s)&#10;   left player:  'a'/'z' keys&#10;   right player: up/down arrow keys&#10;">3D Ball/Wall Collision Code (per frame update):</label><br>
+        <textarea id="codeBallWall" name="codeBallWall" style="width:100%; height:calc(100% - 20px);" spellcheck="false"></textarea><br>
+    </div>
+    <div style="width:30%; height:100%">
+        <div style="width:100%; height:100%;">
+            <label for="log">Log:</label><br>
+            <textarea id="log" name="log" style="width:100%; height:calc(100% - 20px);" disabled></textarea><br>
+        </div>
+    </div>
+    <div style="width:10%; height:100%; float:right; padding:3px">
+        <label for="log" style="height:20px">Controls:</label><br>
+        <div style="display: flex; flex-direction: column; width:100%">
+            <button id="simulateButton" onclick="simulateButton()" style="width:100%; padding:3px">Run Code</button>
+            <button id="resetSimulation" onclick="resetButton()" style="width:100%; padding:3px">Reset</button>
+        </div>
+        <br/>
+    </div>
+  </div>
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.1/jquery.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/raphael/2.3.0/raphael.min.js"></script>
+<script src="math.js"></script>
+<script src="vec4.js"></script>
+<script src="vec3.js"></script>
+<script src="vec2.js"></script>
+<script src="mat2x2.js"></script>
+<script src="mat3x3.js"></script>
+<script src="mat4x4.js"></script>
+<script src="utils.js"></script>
+<script src="simulation.js"></script>
+<script src="model-cube.js"></script>
+<script src="model-sphere.js"></script>
+<script>
+    // Globals
+    var canvasSize, raphael, origin, viewPan = vec2.zero();
+    var field = null, titleText = null, titleTextBckGnd = null;
+    var sim = new Simulation();
+    var deltaTime = 0;
+    var state = { }; // exposed to user script (code state allows user persistent data)
+    var pixelsPerUnit = 20;
+    var cancelSimulation = false;
+    var ball, wall; // Code accessed objects (need them to be globals)...    
+
+    // World information
+    var ballRadius = 1.0;
+    var worldBoxHalfSize = new vec3(10,5,5);
+    var cameraFov_fullDeg = 100;
+    var cameraPos = new vec3(0,0,-10);
+    var transCamera = mat4x4.identity();
+    var transProj = mat4x4.identity();
+    
+    // Called on resize, sets things up...
+    function setupApp() {
+        // Create up the Raphael canvas....    
+        let canvas = document.getElementById("canvas");
+        canvasSize = { w: canvas.offsetWidth, h: canvas.getBoundingClientRect().height };
+        let firstTimeSetup = (raphael == null) ? true : false;
+        if (raphael == null) raphael = Raphael("canvas", canvasSize.w, canvasSize.h);
+        raphael.clear();
+        raphael.setSize(canvasSize.w, canvasSize.h);
+
+        // Reset...
+        titleText = null;
+        titleTextBckGnd = null;
+        
+        // Origin...
+        origin = new vec2(canvasSize.w/2 - viewPan.x, canvasSize.h/2 - viewPan.y);
+        raphael.setViewBox(0, 0, canvasSize.w, canvasSize.h);
+        
+        // Background...
+        field = raphael.rect(0, 0, canvasSize.w, canvasSize.h);
+        field.attr({fill: 'lightgray', stroke: (isSimulationRunning() ? 'red' : 'black'), 'stroke-width': 3});
+        
+        // Setup world...
+        setupWorld(firstTimeSetup);
+        
+        // Title...
+        setupTitle();
+    }
+    
+    // Key presses...
+    document.body.addEventListener('mousedown', onMouseDown, true);
+    document.body.addEventListener('mouseup', onMouseUp, true);
+    document.body.addEventListener('click', onClickFunction, true);
+    var mouseIsDown = null;
+    function onMouseDown(e) {
+        let ptPixels = new vec2(e.pageX, e.pageY);
+        let ptCoordFrame = toCoordFrame(ptPixels);
+        if (!inRect(field, ptCoordFrame.x, ptCoordFrame.y, 0.001)) {
+            return;
+        }
+
+        // Launch ball...
+        // todo
+    }
+    function onMouseUp(e) {
+        mouseIsDown = null;
+    }
+    function onClickFunction(e) {
+        let x = toCoordFrameX(e.pageX - $(document).scrollLeft() - $('#canvas').offset().left);
+        let y = toCoordFrameY(e.pageY - $(document).scrollTop() - $('#canvas').offset().top);
+        if (!inRect(field, x, y, 0)) {
+            return;
+        }
+
+        // Create a ball...
+        let ballPos = new vec3(x, y, ballRadius * 1.1);
+        let ballVel = vec3.multiply((vec3.subtract(ballPos, cameraPos)).unit(), 5);
+        sim.createBall(ballPos, ballVel, ballRadius);
+
+        // Kick off the simulation if not already doing it...
+        if (!isSimulationRunning()) {
+            simulateButton();
+        }
+    }
+
+    // Camera control...
+    var pressedKeys = {};
+    window.onkeyup = function(e) { pressedKeys[e.keyCode] = false; }
+    window.onkeydown = function(e) { pressedKeys[e.keyCode] = true; }
+    function isKeyPressed(keyCode) {
+        return pressedKeys[keyCode];
+    }
+    function updateCamera(deltaTime) {
+        let moveSpeed = 10;
+        let needsToUpdate = false;
+        if (isKeyPressed(65) || isKeyPressed(37)) { // left
+            cameraPos.add(vec3.left().multiply(deltaTime * moveSpeed));
+            needsToUpdate = true;
+        }
+        if (isKeyPressed(68) || isKeyPressed(39)) { // right
+            cameraPos.add(vec3.right().multiply(deltaTime * moveSpeed));
+            needsToUpdate = true;
+        }
+        if (isKeyPressed(87) || isKeyPressed(38)) { // up
+            cameraPos.add(vec3.forward().multiply(deltaTime * moveSpeed));
+            needsToUpdate = true;
+        }        
+        if (isKeyPressed(83) || isKeyPressed(40)) { // down
+            cameraPos.add(vec3.backward().multiply(deltaTime * moveSpeed));
+            needsToUpdate = true;
+        }
+        if (needsToUpdate) {
+            cameraPos.z = min(cameraPos.z, -1);
+            transCamera = m4x4Trans(multiply(cameraPos, -1));
+            createWorldLines();
+        }
+    }
+    
+    // Window focus...
+    document.addEventListener("visibilitychange", onFocusChanged, false);
+    function onFocusChanged(e) {
+        if (isSimulationRunning()) {
+            resetSimulation(false);
+        }
+    }
+    
+    // Button functions...
+    function simulateButton() {
+        if (document.getElementById('simulateButton').textContent == "Run Code") {
+            simulate();
+        } else {
+            resetSimulation(false);
+        }
+    }
+    function isSimulationRunning() {
+        return (document.getElementById('simulateButton').textContent != "Run Code");
+    }
+    function resetButton() {
+        // Simulation...
+        resetSimulation();
+        
+        // View...
+        pixelsPerUnit = 20;
+        viewPan = vec2.zero();
+        setupApp();
+    }
+    
+    // Grid...
+    function setupGrid() {
+        // Consts...
+        const tickHalfSize = 2;
+        const tickHalfSizeMajor = 5;
+        
+        // Determine coord step (in coordinates)...
+        let coordPerTick = 1;
+        if (pixelsPerUnit <= 4) {
+            coordPerTick = 10;
+        } else if (pixelsPerUnit <= 10) {
+            coordPerTick = 5;
+        } 
+        
+        // Setup...
+        const pixelsPerTick = pixelsPerUnit * coordPerTick;
+        const startPixelX = Math.floor((viewPan.x - canvasSize.w/2) / pixelsPerTick) * pixelsPerTick + canvasSize.w/2;
+        const startPixelY = Math.floor((viewPan.y - canvasSize.h/2) / pixelsPerTick) * pixelsPerTick + canvasSize.h/2;
+        
+        // Main axis...
+        let xaxis = raphael.path(["M", 0, origin.y, "L", canvasSize.w, origin.y]).attr({stroke: "#C0C0C0"});      // x-axis
+        let yaxis = raphael.path(["M", origin.x, 0, "L", origin.x, 0 + canvasSize.h]).attr({stroke: "#C0C0C0"}); // y-axis
+        
+        // Ticks...
+        for (let i = startPixelX; i <= startPixelX + canvasSize.w; i += pixelsPerTick) {
+            const majorTick = ((i - canvasSize.w/2) % (pixelsPerTick*5) == 0) || (coordPerTick > 1);
+            const tickHalfSizeLcl = majorTick ? tickHalfSizeMajor : tickHalfSize;
+            raphael.path(["M", i - viewPan.x, origin.y - tickHalfSizeLcl, "L", i - viewPan.x, origin.y + tickHalfSizeLcl]).attr({stroke: "#C0C0C0"});
+        }
+        for (let i = startPixelY; i <= startPixelY + canvasSize.h; i += pixelsPerTick) {
+            const majorTick = ((i - canvasSize.h/2) % (pixelsPerUnit*5) == 0) || (coordPerTick > 1);
+            const tickHalfSizeLcl = majorTick ? tickHalfSizeMajor : tickHalfSize;
+            raphael.path(["M", origin.x - tickHalfSizeLcl, i - viewPan.y, "L", origin.x + tickHalfSizeLcl, i - viewPan.y]).attr({stroke: "#C0C0C0"});
+        }
+    }
+    
+    // Level setup...
+    function setupTitle() {
+        // Setup...
+        let levelCompleted = false;
+
+        // Figure out the text...
+        let titleStr = "Bounce the ball of the walls, in 3D! (click to spawn ball)";
+        let padding = 5;
+    
+        // Remove if it exists...
+        if (titleText == null) {
+            // Create it up...
+            titleText = raphael.text(toPixelsX(0), 21, titleStr).attr({'font-size':18});
+            let textBBox = titleText.getBBox();
+            titleTextBckGnd = raphael.rect(textBBox.x - padding, textBBox.y - padding, textBBox.width + 2 * padding, textBBox.height + 2 * padding, 4);
+            titleText.toFront();
+        }
+        else {
+            // Update...
+            titleText.attr({text: titleStr});
+            let textBBox = titleText.getBBox();
+            titleTextBckGnd.attr({x: textBBox.x - padding, y: textBBox.y - padding, width: textBBox.width + 2 * padding, height: textBBox.height + 2 * padding });
+        }
+        
+        // Colors...
+        titleText.attr({fill: 'darkblue'});
+        titleTextBckGnd.attr({'fill': 'lightblue', 'stroke-width': 2, 'stroke': 'blue'});
+    }
+    function setupWorld(fullReset = false) {
+        // Reset field color...
+        field.attr({fill: 'lightgray'});
+        
+        // Title...
+        setupTitle();
+
+        // Make sure everything is reset...
+        sim.reset();
+
+        // World config...
+        worldBoxHalfSize = new vec3(20, 10, 5);
+        cameraFov_fullDeg = 100;
+        cameraPos = new vec3(0,0,-8);
+        transCamera = m4x4Trans(multiply(cameraPos, -1));
+        transProj = m4x4Proj(cameraFov_fullDeg);
+
+        // Lines...
+        createWorldLines();
+    }
+
+    function createWorldLines() {
+        sim.destroyAllLines();
+
+        // Box lines...
+        let lineColor = new vec3(50, 50, 50);
+        let toScreenSpace = mat4x4.multiply(transProj, transCamera);
+        let verts = [ new vec3(-worldBoxHalfSize.x,  worldBoxHalfSize.y, 0), new vec3( worldBoxHalfSize.x,  worldBoxHalfSize.y, 0), 
+                        new vec3(-worldBoxHalfSize.x, -worldBoxHalfSize.y, 0), new vec3( worldBoxHalfSize.x, -worldBoxHalfSize.y, 0),
+                        new vec3(-worldBoxHalfSize.x,  worldBoxHalfSize.y, 2 * worldBoxHalfSize.z), new vec3( worldBoxHalfSize.x,  worldBoxHalfSize.y, 2 * worldBoxHalfSize.z), 
+                        new vec3(-worldBoxHalfSize.x, -worldBoxHalfSize.y, 2 * worldBoxHalfSize.z), new vec3( worldBoxHalfSize.x, -worldBoxHalfSize.y, 2 * worldBoxHalfSize.z) ];
+
+        sim.createLine( toScreenSpace.transformPoint(verts[0]), toScreenSpace.transformPoint(verts[1]), lineColor );
+        sim.createLine( toScreenSpace.transformPoint(verts[2]), toScreenSpace.transformPoint(verts[3]), lineColor );
+        sim.createLine( toScreenSpace.transformPoint(verts[0]), toScreenSpace.transformPoint(verts[2]), lineColor );
+        sim.createLine( toScreenSpace.transformPoint(verts[1]), toScreenSpace.transformPoint(verts[3]), lineColor );
+
+        sim.createLine( toScreenSpace.transformPoint(verts[4]), toScreenSpace.transformPoint(verts[5]), lineColor );
+        sim.createLine( toScreenSpace.transformPoint(verts[6]), toScreenSpace.transformPoint(verts[7]), lineColor );
+        sim.createLine( toScreenSpace.transformPoint(verts[4]), toScreenSpace.transformPoint(verts[6]), lineColor );
+        sim.createLine( toScreenSpace.transformPoint(verts[5]), toScreenSpace.transformPoint(verts[7]), lineColor );
+
+        sim.createLine( toScreenSpace.transformPoint(verts[0]), toScreenSpace.transformPoint(verts[4]), lineColor );
+        sim.createLine( toScreenSpace.transformPoint(verts[2]), toScreenSpace.transformPoint(verts[6]), lineColor );
+        sim.createLine( toScreenSpace.transformPoint(verts[1]), toScreenSpace.transformPoint(verts[5]), lineColor );
+        sim.createLine( toScreenSpace.transformPoint(verts[3]), toScreenSpace.transformPoint(verts[7]), lineColor );
+
+        // Make sure the field stays at the very back...
+        field.toBack();
+    }
+    
+    // Simulation...
+    function setupSimulation() {
+        // Nothing we need to do here...
+        return true;
+    }
+    function execSimulation() {
+        // Run the code in the UI element...
+        if (!executeCode(code)) {
+            return false;
+        }
+        return true;
+    }
+    function resetSimulation(fullReset = true) {
+        // Maybe reset the simulation...
+        if (fullReset) {
+            // Sim reset
+            sim.reset();
+            
+            // Reset user state
+            state = { };
+            
+            // Setup level...
+            setupWorld(fullReset);
+        }
+
+        // Cancel us out of the simulation (if it's currently running)...
+        cancelSimulation = true;
+        document.getElementById('simulateButton').textContent = "Run Code";
+        field.attr({stroke: 'black'});
+        
+        // Clear the log...
+        if (fullReset) {
+            if (document.getElementById('log') != null) document.getElementById('log').value = '';
+        }
+    }
+
+    // Simulation function...
+    function simulate() {
+        // Sim tick function...
+        var advance = function() {
+            // Check for cancelled...
+            if (cancelSimulation) {
+                resetSimulation(false);
+                return;
+            }
+
+            // Setup...
+            let codeBallWall = document.getElementById('codeBallWall').value;            
+            
+            // Step the sim...
+            let timeNow = Date.now()
+            deltaTime = (timeNow - timeLastUpdate) / 1000;
+            timeLastUpdate = timeNow;
+            
+            // Clamp deltaTime (slow down the sim, if needed)...
+            deltaTime = Math.min(deltaTime, 1/10);
+            
+            // Sim...
+            let hitError = !sim.update(deltaTime, codeBallWall);
+            sim.cullNotInField(field);
+
+            // Camera...
+            updateCamera(deltaTime);
+
+            // Maybe request another update...
+            if (!hitError && !sim.shouldStopSimulation()) {
+                setTimeout(advance, 5);
+            } else {
+                resetSimulation(false);
+            }
+        }
+        
+        // Setup...
+        if (!setupSimulation()) {
+            return;
+        }
+        
+        // Kick it off...
+        var timeLastUpdate = Date.now();
+        cancelSimulation = false;
+        sim.timeReadyToStopSim = 0;
+        document.getElementById('simulateButton').textContent = "Pause Sim";
+        field.attr({stroke: 'red'});
+        advance();
+    }
+    
+    // Deal with resizing...
+    window.addEventListener('resize', setupApp);
+
+    // First time setup...
+    setupApp();
+</script>
+</body>
+</html>
