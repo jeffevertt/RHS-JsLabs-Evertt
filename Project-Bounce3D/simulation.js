@@ -161,6 +161,24 @@ class Simulation {
     shouldStopSimulation() {
         return false;
     }
+
+    sortGraphicsObjects() {
+        this.balls.sort( function(a, b) { return a.position.z < b.position.z ? -1 : 1 } );
+        for (let i = 0; i < this.balls.length; i++) {
+            if (isInsideWorld(this.balls[i].position)) {
+                this.balls[i].raphaelObject.toBack();
+            }
+        }
+        for (let i = 0; i < this.lines.length; i++) {
+            this.lines[i].toBack();
+        }
+        for (let i = 0; i < this.balls.length; i++) {
+            if (!isInsideWorld(this.balls[i].position)) {
+                this.balls[i].raphaelObject.toBack();
+            }
+        }
+        field.toBack();
+    }
     
     update(deltaTime, codeBallWall) {
         for (let i = 0; i < this.balls.length; ++i) { 
@@ -168,6 +186,7 @@ class Simulation {
                 return false;
             }
         }
+        this.sortGraphicsObjects();
         return true;
     }
 }

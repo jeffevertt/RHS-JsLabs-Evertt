@@ -182,3 +182,11 @@ function intersectSphereSegment(sphereCenter, sphereRadius, segStart, segDir) {
     let intersectsSphere = (sphereCenter.distanceSqr(closestPoint) < (sphereRadius * sphereRadius)) ? true : false;
     return { intersects:intersectsSphere, closestPoint:closestPoint, closestPointT:alongSegT };
 }
+
+function intersectiLinePlane(planePoint, planeNormal, linePoint, lineDirUnit) {
+    if (planeNormal.dot(lineDirUnit) == 0) {
+        return null;
+    }
+    let t = (planeNormal.dot(planePoint) - planeNormal.dot(linePoint)) / planeNormal.dot(lineDirUnit);
+    return add( linePoint, multiply(lineDirUnit, t));
+ }

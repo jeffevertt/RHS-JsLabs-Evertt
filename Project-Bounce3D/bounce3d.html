@@ -95,8 +95,23 @@
             return;
         }
 
+        // Figure out the ray vector...
+        let ptNearClip = new vec2(ptCoordFrame.x / toCoordFrameLength(canvasSize.w / 2), ptCoordFrame.y / toCoordFrameLength(canvasSize.h / 2));
+        let nearClipY = tan(-cameraFov_fullDeg / 2) * ptNearClip.y;
+        let nearClipX = canvasSize.w / canvasSize.h * tan(-cameraFov_fullDeg / 2) * ptNearClip.x;
+        let dirVec = (new vec3(nearClipX, nearClipY, 0.5)).unit();
+
+        // And the ball pos (intersect with back plane, at zero)...
+        let ballPos = intersectiLinePlane(new vec3(0,0,ballRadius + 0.1), vec3.backward(), cameraPos, dirVec);
+        let ballVel = vec3.multiply((vec3.subtract(ballPos, cameraPos)).unit(), randRange(5, 15));
+
         // Launch ball...
-        // todo
+        sim.createBall(ballPos, ballVel, ballRadius);
+
+        // Kick off the simulation if not already doing it...
+        if (!isSimulationRunning()) {
+            simulateButton();
+        }
     }
     function onMouseUp(e) {
         mouseIsDown = null;
@@ -106,16 +121,6 @@
         let y = toCoordFrameY(e.pageY - $(document).scrollTop() - $('#canvas').offset().top);
         if (!inRect(field, x, y, 0)) {
             return;
-        }
-
-        // Create a ball...
-        let ballPos = new vec3(x, y, ballRadius * 1.1);
-        let ballVel = vec3.multiply((vec3.subtract(ballPos, cameraPos)).unit(), 5);
-        sim.createBall(ballPos, ballVel, ballRadius);
-
-        // Kick off the simulation if not already doing it...
-        if (!isSimulationRunning()) {
-            simulateButton();
         }
     }
 
